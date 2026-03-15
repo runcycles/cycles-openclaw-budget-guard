@@ -8,13 +8,17 @@ const mockCommitReservation = vi.fn();
 const mockReleaseReservation = vi.fn();
 
 vi.mock("runcycles", () => ({
-  CyclesClient: vi.fn().mockImplementation(() => ({
-    getBalances: mockGetBalances,
-    createReservation: mockCreateReservation,
-    commitReservation: mockCommitReservation,
-    releaseReservation: mockReleaseReservation,
-  })),
-  CyclesConfig: vi.fn(),
+  CyclesClient: vi.fn().mockImplementation(function () {
+    return {
+      getBalances: mockGetBalances,
+      createReservation: mockCreateReservation,
+      commitReservation: mockCommitReservation,
+      releaseReservation: mockReleaseReservation,
+    };
+  }),
+  CyclesConfig: vi.fn().mockImplementation(function () {
+    return {};
+  }),
   balanceResponseFromWire: vi.fn((body) => body),
   reservationCreateResponseFromWire: vi.fn((body) => body),
   isAllowed: vi.fn(),
