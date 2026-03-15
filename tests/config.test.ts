@@ -126,6 +126,11 @@ describe("resolveConfig", () => {
     expect(cfg.logLevel).toBe("info");
   });
 
+  it("accepts 'error' as valid logLevel", () => {
+    const cfg = resolveConfig({ ...minValid, logLevel: "error" });
+    expect(cfg.logLevel).toBe("error");
+  });
+
   it("ignores non-string values for string fields", () => {
     // cyclesBaseUrl is required, but if it's a number the env var fallback should be used
     process.env.CYCLES_BASE_URL = "http://fallback";

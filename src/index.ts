@@ -18,6 +18,9 @@ import {
 
 import type { OpenClawPluginApi } from "./types.js";
 
+export { BudgetExhaustedError, ToolBudgetDeniedError } from "./types.js";
+export type { BudgetGuardConfig, BudgetLevel, BudgetSnapshot } from "./types.js";
+
 export default function (api: OpenClawPluginApi): void {
   const config = resolveConfig(api.config);
 

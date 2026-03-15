@@ -8,13 +8,17 @@ const mockCommitReservation = vi.fn();
 const mockReleaseReservation = vi.fn();
 
 vi.mock("runcycles", () => ({
-  CyclesClient: vi.fn().mockImplementation(() => ({
-    getBalances: mockGetBalances,
-    createReservation: mockCreateReservation,
-    commitReservation: mockCommitReservation,
-    releaseReservation: mockReleaseReservation,
-  })),
-  CyclesConfig: vi.fn(),
+  CyclesClient: vi.fn().mockImplementation(function () {
+    return {
+      getBalances: mockGetBalances,
+      createReservation: mockCreateReservation,
+      commitReservation: mockCommitReservation,
+      releaseReservation: mockReleaseReservation,
+    };
+  }),
+  CyclesConfig: vi.fn().mockImplementation(function () {
+    return {};
+  }),
   balanceResponseFromWire: vi.fn((body) => body),
   reservationCreateResponseFromWire: vi.fn((body) => body),
   isAllowed: vi.fn(),
@@ -85,6 +89,23 @@ describe("fetchBudgetState", () => {
     expect(snapshot.spent).toBe(5_000_000);
     expect(snapshot.allocated).toBe(100_000_000);
     expect(snapshot.level).toBe("healthy");
+  });
+
+  it("returns fail-open snapshot on API error without errorMessage", async () => {
+    mockGetBalances.mockResolvedValue({
+      isSuccess: false,
+      status: 500,
+      errorMessage: undefined,
+    });
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("unknown"),
+    );
   });
 
   it("returns fail-open snapshot on API error", async () => {
@@ -284,6 +305,47 @@ describe("reserveBudget", () => {
     });
   });
 
+  it("includes budgetId as app in subject when set", async () => {
+    const cfgWithBudget = makeConfig({ budgetId: "my-app" });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(cfgWithBudget);
+    await reserveBudget(client, cfgWithBudget, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: { tenant: "test-tenant", app: "my-app" },
+      }),
+    );
+  });
+
+  it("omits app from subject when budgetId is undefined", async () => {
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(config);
+    await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: { tenant: "test-tenant" },
+      }),
+    );
+  });
+
   it("returns synthetic DENY on API error", async () => {
     mockCreateReservation.mockResolvedValue({
       isSuccess: false,
@@ -326,6 +388,21 @@ describe("commitUsage", () => {
     vi.clearAllMocks();
   });
 
+  it("commits successfully without warning", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-ok", 500_000, "USD_MICROCENTS", logger);
+    expect(mockCommitReservation).toHaveBeenCalledWith("res-ok", {
+      idempotency_key: "test-uuid-1234",
+      actual: { unit: "USD_MICROCENTS", amount: 500_000 },
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it("does not throw on API error", async () => {
     mockCommitReservation.mockResolvedValue({
       isSuccess: false,
@@ -355,6 +432,20 @@ describe("releaseReservation", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("releases successfully", async () => {
+    mockReleaseReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "released" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await releaseReservation(client, "res-ok", "cleanup", logger);
+    expect(mockReleaseReservation).toHaveBeenCalledWith("res-ok", {
+      idempotency_key: "test-uuid-1234",
+      reason: "cleanup",
+    });
   });
 
   it("does not throw on API error", async () => {

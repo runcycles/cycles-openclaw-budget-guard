@@ -122,7 +122,10 @@ export async function reserveBudget(
 ): Promise<ReservationCreateResponse> {
   const body: Record<string, unknown> = {
     idempotency_key: randomUUID(),
-    subject: { tenant: config.tenant },
+    subject: {
+      tenant: config.tenant,
+      ...(config.budgetId ? { app: config.budgetId } : {}),
+    },
     action: { kind: opts.actionKind, name: opts.actionName },
     estimate: { unit: config.currency, amount: opts.estimate },
     ttl_ms: 60_000,
