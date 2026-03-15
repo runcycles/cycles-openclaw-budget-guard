@@ -98,13 +98,12 @@ export function initHooks(
   // Gap 10: Dry-run mode
   if (config.dryRun) {
     client = new DryRunClient(config.dryRunBudget) as unknown as CyclesClient;
-    logger.info("[DRY-RUN] Plugin initialized with simulated budget", {
-      budget: config.dryRunBudget,
-      tenant: config.tenant,
-    } as unknown as string);
+    logger.info(
+      `[DRY-RUN] Plugin initialized with simulated budget=${config.dryRunBudget} tenant=${config.tenant}`,
+    );
   } else {
     client = createCyclesClient(config);
-    logger.info("Plugin initialized", { tenant: config.tenant } as unknown as string);
+    logger.info(`Plugin initialized tenant=${config.tenant}`);
   }
 
   cachedSnapshot = undefined;
@@ -318,9 +317,12 @@ export async function beforeModelResolve(
 
     // Commit immediately (no after_model_resolve hook available)
     if (result.reservationId) {
-      await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
-      const key = `model:${modelReservationCounter}`;
-      activeReservations.delete(key);
+      try {
+        await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
+      } finally {
+        const key = `model:${modelReservationCounter}`;
+        activeReservations.delete(key);
+      }
     }
 
     // Gap 6 & 9: Track model cost
@@ -532,13 +534,17 @@ export async function afterToolCall(
   // Gap 2: Use cost estimator if available, otherwise use estimate
   let actual = reservation.estimate;
   if (config.costEstimator) {
-    const computed = config.costEstimator({
-      toolName: reservation.toolName,
-      estimate: reservation.estimate,
-      durationMs: event.durationMs,
-      result: event.result,
-    });
-    if (computed !== undefined) actual = computed;
+    try {
+      const computed = config.costEstimator({
+        toolName: reservation.toolName,
+        estimate: reservation.estimate,
+        durationMs: event.durationMs,
+        result: event.result,
+      });
+      if (computed !== undefined) actual = computed;
+    } catch (err) {
+      logger.warn(`costEstimator threw for tool=${reservation.toolName}, using estimate:`, err);
+    }
   }
 
   const unit = reservation.currency ?? config.currency;
@@ -604,7 +610,7 @@ export async function agentEnd(
     endedAt: Date.now(),
   };
 
-  logger.info("Agent session budget summary:", summary as unknown as string);
+  logger.info(`Agent session budget summary: remaining=${summary.remaining} spent=${summary.spent} reservations=${summary.totalReservationsMade}`);
 
   // Attach to context metadata if available
   if (ctx.metadata) {

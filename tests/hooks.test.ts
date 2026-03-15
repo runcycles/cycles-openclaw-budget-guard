@@ -76,8 +76,7 @@ describe("initHooks", () => {
     const logger = makeLogger();
     initHooks(makeConfig(), logger);
     expect(logger.info).toHaveBeenCalledWith(
-      "Plugin initialized",
-      expect.anything(),
+      expect.stringContaining("Plugin initialized"),
     );
   });
 
@@ -118,7 +117,6 @@ describe("initHooks", () => {
     expect(DryRunClient).toHaveBeenCalledWith(50_000_000);
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("[DRY-RUN]"),
-      expect.anything(),
     );
   });
 });
@@ -932,6 +930,40 @@ describe("afterToolCall", () => {
     );
   });
 
+  it("falls back to estimate when costEstimator throws", async () => {
+    const estimator = vi.fn(() => { throw new Error("estimator failed"); });
+    const { logger } = setup({ costEstimator: estimator, toolBaseCosts: { web_search: 200_000 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({
+      decision: "ALLOW",
+      reservationId: "res-est-throw",
+      affectedScopes: [],
+    });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    await beforeToolCall(
+      { toolName: "web_search", toolCallId: "call-est-throw" },
+      makeHookContext(),
+    );
+    await afterToolCall(
+      { toolName: "web_search", toolCallId: "call-est-throw" },
+      makeHookContext(),
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("costEstimator threw"),
+      expect.any(Error),
+    );
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "res-est-throw",
+      200_000,
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
   it("falls back to estimate when costEstimator returns undefined (Gap 2)", async () => {
     const estimator = vi.fn(() => undefined);
     setup({ costEstimator: estimator, toolBaseCosts: { web_search: 200_000 } });
@@ -978,7 +1010,6 @@ describe("agentEnd", () => {
     expect(mockReleaseReservation).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("summary"),
-      expect.anything(),
     );
   });
 
