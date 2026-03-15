@@ -1171,3 +1171,219 @@ describe("budget transition alerts (Gap 5)", () => {
     );
   });
 });
+
+describe("fireWebhook error handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("catches and logs webhook POST failure", async () => {
+    const { logger } = setup({ budgetTransitionWebhookUrl: "https://hooks.example.com/budget" });
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    // First call to set lastKnownLevel
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Make fetch reject to trigger the .catch() path
+    mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+    // Transition to trigger webhook
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low" }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Wait for the async .catch to execute
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Webhook POST"),
+        expect.any(Error),
+      );
+    });
+  });
+});
+
+describe("limit_remaining_calls in beforeModelResolve", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("throws BudgetExhaustedError when limit reached and failClosed=true", async () => {
+    setup({
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 0,
+      failClosed: true,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+
+    await expect(
+      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
+    ).rejects.toThrow(BudgetExhaustedError);
+  });
+
+  it("allows when limit reached and failClosed=false", async () => {
+    const { logger } = setup({
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 0,
+      failClosed: false,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(result).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Low budget call limit reached"),
+    );
+  });
+});
+
+describe("reduce_max_tokens hint truncation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("truncates combined hint when it exceeds maxPromptHintChars", async () => {
+    setup({
+      injectPromptBudgetHint: true,
+      lowBudgetStrategies: ["reduce_max_tokens"],
+      maxTokensWhenLow: 512,
+      maxPromptHintChars: 40,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low" }));
+    // Return a long hint that combined with max-tokens text will exceed 40 chars
+    mockFormatBudgetHint.mockReturnValue("Budget: 5000000 remaining.");
+
+    const result = await beforePromptBuild({}, makeHookContext());
+    expect(result?.prependSystemContext?.length).toBeLessThanOrEqual(40);
+    expect(result?.prependSystemContext).toMatch(/\.\.\.$/);
+  });
+});
+
+describe("retry with limit_remaining_calls", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+  });
+
+  it("decrements remainingCallsAllowed on retry success when low + limit_remaining_calls", async () => {
+    setup({
+      retryOnDeny: true,
+      retryDelayMs: 10,
+      maxRetries: 1,
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 2,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low" }));
+    mockIsAllowed
+      .mockReturnValueOnce(false) // first attempt denied
+      .mockReturnValueOnce(true); // retry succeeds
+    mockReserveBudget
+      .mockResolvedValueOnce({ decision: "DENY", affectedScopes: [], reasonCode: "limit" })
+      .mockResolvedValueOnce({ decision: "ALLOW", reservationId: "res-retry-limit", affectedScopes: [] });
+
+    const result = await beforeToolCall(
+      { toolName: "web_search", toolCallId: "call-retry-limit" },
+      makeHookContext(),
+    );
+    expect(result).toBeUndefined();
+
+    // After using one call from the limit, the next call should still work (1 remaining)
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "res-2", affectedScopes: [] });
+
+    const result2 = await beforeToolCall(
+      { toolName: "web_search", toolCallId: "call-retry-limit-2" },
+      makeHookContext(),
+    );
+    expect(result2).toBeUndefined();
+
+    // Third call should be blocked (limit was 2, used 2)
+    const result3 = await beforeToolCall(
+      { toolName: "web_search", toolCallId: "call-retry-limit-3" },
+      makeHookContext(),
+    );
+    expect(result3).toEqual({
+      block: true,
+      blockReason: expect.stringContaining("call limit reached"),
+    });
+  });
+});
+
+describe("onBudgetTransition callback error", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("catches onBudgetTransition callback error and logs warning", async () => {
+    const onTransition = vi.fn(() => {
+      throw new Error("transition callback failed");
+    });
+    const { logger } = setup({ onBudgetTransition: onTransition });
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    // First call sets lastKnownLevel
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Transition triggers callback that throws
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low" }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("onBudgetTransition callback error"),
+      expect.any(Error),
+    );
+  });
+});
+
+describe("snapshot cache hit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns cached snapshot when within TTL (two prompt builds in sequence)", async () => {
+    setup({ snapshotCacheTtlMs: 10_000, injectPromptBudgetHint: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+
+    // First prompt build fetches snapshot
+    await beforePromptBuild({}, makeHookContext());
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(1);
+
+    // Advance less than TTL
+    vi.advanceTimersByTime(1);
+
+    // Second prompt build should use cached snapshot (no new fetch)
+    await beforePromptBuild({}, makeHookContext());
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("onSessionEnd error handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("catches onSessionEnd callback error and logs warning", async () => {
+    const onSessionEnd = vi.fn().mockRejectedValue(new Error("callback failed"));
+    const { logger } = setup({ onSessionEnd });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+
+    await agentEnd({}, makeHookContext());
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("onSessionEnd callback error"),
+      expect.any(Error),
+    );
+  });
+});
