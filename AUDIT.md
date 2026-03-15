@@ -36,20 +36,20 @@
 ```
 File         | % Stmts | % Branch | % Funcs | % Lines
 -------------|---------|----------|---------|--------
-All files    |   99.52 |    95.01 |   98.33 |    100
+All files    |   99.76 |    99.16 |   98.33 |    100
   budget.ts  |     100 |      100 |     100 |    100
   config.ts  |     100 |      100 |     100 |    100
-  cycles.ts  |   98.36 |    98.30 |      90 |    100
-  dry-run.ts |     100 |    66.66 |     100 |    100
-  hooks.ts   |   99.54 |    90.07 |     100 |    100
+  cycles.ts  |   98.46 |      100 |      90 |    100
+  dry-run.ts |     100 |      100 |     100 |    100
+  hooks.ts   |     100 |    98.60 |     100 |    100
   index.ts   |     100 |      100 |     100 |    100
   logger.ts  |     100 |       90 |     100 |    100
   types.ts   |     100 |      100 |     100 |    100
 ```
 
-185 tests across 8 test files. **100% line coverage, 95% branch coverage.**
+200 tests across 8 test files. **100% line coverage, 99% branch coverage.**
 
-Remaining uncovered branches are implicit from nullish coalescing (`??`), optional chaining (`?.`), and ternary operators where only one path is reachable in tested scenarios.
+The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is always provided by OpenClaw, `reservation.currency` is always set at creation, and `shouldLog("error")` is always true since error is the highest log level.
 
 ---
 
@@ -437,4 +437,4 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (185 tests, 100% line coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.

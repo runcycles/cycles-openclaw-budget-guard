@@ -436,11 +436,11 @@ cycles-openclaw-budget-guard/
 │   └── dry-run.ts               # In-memory simulated Cycles client for dry-run mode
 └── tests/
     ├── helpers.ts               # Shared test utilities (makeConfig, makeSnapshot, etc.)
-    ├── hooks.test.ts            # Hook implementation tests (68 tests)
+    ├── hooks.test.ts            # Hook implementation tests (79 tests)
     ├── budget.test.ts           # Budget classification and hint formatting tests (24 tests)
     ├── config.test.ts           # Config resolution and validation tests (29 tests)
-    ├── cycles.test.ts           # Cycles API wrapper tests (31 tests)
-    ├── dry-run.test.ts          # DryRunClient simulation tests (8 tests)
+    ├── cycles.test.ts           # Cycles API wrapper tests (32 tests)
+    ├── dry-run.test.ts          # DryRunClient simulation tests (11 tests)
     ├── logger.test.ts           # Logger level filtering tests (8 tests)
     ├── index.test.ts            # Plugin entrypoint export tests (8 tests)
     └── types.test.ts            # Error class and type tests (9 tests)

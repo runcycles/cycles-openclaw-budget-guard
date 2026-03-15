@@ -320,6 +320,30 @@ describe("fetchBudgetState", () => {
     expect(snapshot.poolRemaining).toBe(50_000_000);
     expect(snapshot.poolAllocated).toBe(100_000_000);
   });
+
+  it("returns undefined pool balance when parentBudgetId set but no match found (Gap 18)", async () => {
+    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetId: "my-app" });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test:my-app",
+            scopePath: "/test/my-app",
+            remaining: { unit: "USD_MICROCENTS", amount: 5_000_000 },
+          },
+          // No balance matching "team-pool" in scope
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfgWithPool);
+    const snapshot = await fetchBudgetState(client, cfgWithPool, logger);
+
+    expect(snapshot.remaining).toBe(5_000_000);
+    expect(snapshot.poolRemaining).toBeUndefined();
+    expect(snapshot.poolAllocated).toBeUndefined();
+  });
 });
 
 describe("reserveBudget", () => {
