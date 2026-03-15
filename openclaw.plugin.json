@@ -87,6 +87,6 @@
         "description": "Minimum log level for plugin output."
       }
     },
-    "required": ["cyclesBaseUrl", "cyclesApiKey", "tenant"]
+    "required": ["tenant"]
   }
 }

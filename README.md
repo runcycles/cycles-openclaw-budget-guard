@@ -100,7 +100,7 @@ You should see log lines prefixed with `[cycles-budget-guard]`:
 [cycles-budget-guard] before_prompt_build: injecting hint (142 chars)
 [cycles-budget-guard] before_tool_call: tool=web_search callId=abc123 estimate=500000
 [cycles-budget-guard] after_tool_call: committed 500000 for tool=web_search
-[cycles-budget-guard] Agent session budget summary: { remaining: 9500000, spent: 500000, ... }
+[cycles-budget-guard] Agent session budget summary: { remaining: 9500000, spent: 500000, totalReservationsMade: 1 }
 ```
 
 ### 5. (Optional) Use environment variables for secrets
