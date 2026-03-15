@@ -8,8 +8,8 @@ export default defineConfig({
     pool: "threads",
     coverage: {
       thresholds: {
-        lines: 90,
-        branches: 80,
+        lines: 95,
+        branches: 95,
       },
     },
   },
