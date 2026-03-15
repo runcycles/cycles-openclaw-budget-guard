@@ -1,8 +1,9 @@
 /**
  * cycles-openclaw-budget-guard
  *
- * OpenClaw plugin entrypoint. Exports a default register function that
- * returns lifecycle hooks for budget-aware model and tool execution.
+ * OpenClaw plugin entrypoint. Exports a default function that receives the
+ * OpenClaw plugin API and registers lifecycle hooks for budget-aware model
+ * and tool execution via api.on().
  */
 
 import { resolveConfig } from "./config.js";
@@ -15,22 +16,39 @@ import {
   agentEnd,
 } from "./hooks.js";
 
-export default function register(
-  pluginConfig: Record<string, unknown>,
-): Record<string, unknown> {
-  const config = resolveConfig(pluginConfig);
+import type { OpenClawPluginApi } from "./types.js";
+
+export default function (api: OpenClawPluginApi): void {
+  const config = resolveConfig(api.config);
 
   if (!config.enabled) {
-    return {};
+    return;
   }
 
-  initHooks(config);
+  initHooks(config, api.logger);
 
-  return {
-    before_model_resolve: beforeModelResolve,
-    before_prompt_build: beforePromptBuild,
-    before_tool_call: beforeToolCall,
-    after_tool_call: afterToolCall,
-    agent_end: agentEnd,
-  };
+  api.on("before_model_resolve", beforeModelResolve, {
+    name: "cycles-budget-guard:before_model_resolve",
+    priority: 10,
+  });
+
+  api.on("before_prompt_build", beforePromptBuild, {
+    name: "cycles-budget-guard:before_prompt_build",
+    priority: 10,
+  });
+
+  api.on("before_tool_call", beforeToolCall, {
+    name: "cycles-budget-guard:before_tool_call",
+    priority: 10,
+  });
+
+  api.on("after_tool_call", afterToolCall, {
+    name: "cycles-budget-guard:after_tool_call",
+    priority: 10,
+  });
+
+  api.on("agent_end", agentEnd, {
+    name: "cycles-budget-guard:agent_end",
+    priority: 100,
+  });
 }

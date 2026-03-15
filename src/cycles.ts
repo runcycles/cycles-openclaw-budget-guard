@@ -14,9 +14,8 @@ import {
   type ReservationCreateResponse,
 } from "runcycles";
 
-import type { BudgetGuardConfig, BudgetSnapshot } from "./types.js";
+import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger } from "./types.js";
 import { classifyBudget } from "./budget.js";
-import type { Logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Client factory
@@ -38,7 +37,7 @@ export function createCyclesClient(config: BudgetGuardConfig): CyclesClient {
 export async function fetchBudgetState(
   client: CyclesClient,
   config: BudgetGuardConfig,
-  logger: Logger,
+  logger: OpenClawLogger,
 ): Promise<BudgetSnapshot> {
   const params: Record<string, string> = { tenant: config.tenant };
   if (config.budgetId) {
@@ -155,7 +154,7 @@ export async function commitUsage(
   reservationId: string,
   actual: number,
   unit: string,
-  logger: Logger,
+  logger: OpenClawLogger,
 ): Promise<void> {
   try {
     const body: Record<string, unknown> = {
@@ -181,7 +180,7 @@ export async function releaseReservation(
   client: CyclesClient,
   reservationId: string,
   reason: string,
-  logger: Logger,
+  logger: OpenClawLogger,
 ): Promise<void> {
   try {
     const body: Record<string, unknown> = {

@@ -29,7 +29,7 @@ cycles-openclaw-budget-guard/
 ├── tsconfig.json
 ├── tsup.config.ts
 └── src/
-    ├── index.ts                 # Plugin entrypoint — exports register()
+    ├── index.ts                 # Plugin entrypoint — exports default function(api)
     ├── types.ts                 # Config interface, hook payload types, error classes
     ├── config.ts                # Config validation with defaults and env-var fallbacks
     ├── logger.ts                # Simple leveled logger ([cycles-budget-guard] prefix)
@@ -155,7 +155,7 @@ Budget: 5000000 USD_MICROCENTS remaining. Budget is low — prefer cheaper model
 
 ### Hook: `before_tool_call`
 
-Looks up the tool's estimated cost from `toolBaseCosts` (falls back to a default of 100,000 units). Creates a Cycles reservation via `POST /v1/reservations`. If the reservation is denied (`DENY` decision), throws `ToolBudgetDeniedError` to block the tool call. Stores the reservation in an in-memory map for settlement in `after_tool_call`.
+Looks up the tool's estimated cost from `toolBaseCosts` (falls back to a default of 100,000 units). Creates a Cycles reservation via `POST /v1/reservations`. If the reservation is denied (`DENY` decision), returns `{ block: true, blockReason: "..." }` to block the tool call via OpenClaw's standard hook API. Stores the reservation in an in-memory map for settlement in `after_tool_call`.
 
 ### Hook: `after_tool_call`
 
@@ -170,7 +170,7 @@ Releases any orphaned reservations (defensive cleanup), fetches final budget sta
 The plugin throws two structured error types:
 
 - **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown by `before_model_resolve` when budget is exhausted and `failClosed` is true.
-- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — thrown by `before_tool_call` when a reservation is denied by the Cycles server.
+- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type. The `before_tool_call` hook returns `{ block: true, blockReason }` to OpenClaw when a reservation is denied.
 
 ### Fail-Open Behavior
 

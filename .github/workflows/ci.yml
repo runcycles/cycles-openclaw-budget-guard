@@ -45,18 +45,35 @@ jobs:
       - name: Verify plugin manifest
         run: node -e "JSON.parse(require('fs').readFileSync('openclaw.plugin.json','utf8'))"
 
-      - name: Verify register function
+      - name: Verify plugin entrypoint
         run: |
           node -e "
-            import register from './dist/index.js';
-            const empty = register({ enabled: false, cyclesBaseUrl: 'x', cyclesApiKey: 'x', tenant: 'x' });
-            if (Object.keys(empty).length !== 0) { throw new Error('disabled should return empty'); }
-            const hooks = register({ cyclesBaseUrl: 'http://localhost:8080', cyclesApiKey: 'test', tenant: 'test' });
+            import pluginFn from './dist/index.js';
+            if (typeof pluginFn !== 'function') { throw new Error('default export must be a function'); }
+
+            // Test disabled plugin does nothing
+            const registeredDisabled = [];
+            const disabledApi = {
+              config: { enabled: false, cyclesBaseUrl: 'x', cyclesApiKey: 'x', tenant: 'x' },
+              logger: { debug() {}, info() {}, warn() {}, error() {} },
+              on(name, handler, opts) { registeredDisabled.push(name); },
+            };
+            pluginFn(disabledApi);
+            if (registeredDisabled.length !== 0) { throw new Error('disabled plugin should not register hooks'); }
+
+            // Test enabled plugin registers all hooks
+            const registeredEnabled = [];
+            const enabledApi = {
+              config: { cyclesBaseUrl: 'http://localhost:8080', cyclesApiKey: 'test', tenant: 'test' },
+              logger: { debug() {}, info() {}, warn() {}, error() {} },
+              on(name, handler, opts) { registeredEnabled.push(name); },
+            };
+            pluginFn(enabledApi);
             const expected = ['before_model_resolve','before_prompt_build','before_tool_call','after_tool_call','agent_end'];
             for (const h of expected) {
-              if (typeof hooks[h] !== 'function') { throw new Error('missing hook: ' + h); }
+              if (!registeredEnabled.includes(h)) { throw new Error('missing hook: ' + h); }
             }
-            console.log('All hooks registered correctly');
+            console.log('All hooks registered correctly via api.on()');
           "
 
   publish:

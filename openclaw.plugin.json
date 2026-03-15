@@ -3,6 +3,7 @@
   "name": "Cycles OpenClaw Budget Guard",
   "version": "0.1.0",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
+  "extensions": ["./dist/index.js"],
   "configSchema": {
     "type": "object",
     "properties": {

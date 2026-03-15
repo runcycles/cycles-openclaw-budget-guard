@@ -1,7 +1,7 @@
 /**
  * OpenClaw lifecycle hook implementations.
  *
- * All hooks are thin orchestration over cycles.ts and budget.ts.
+ * All hooks follow the OpenClaw (event, ctx) => result pattern.
  * Module-level state is initialized once via initHooks().
  */
 
@@ -9,19 +9,22 @@ import { type CyclesClient, isAllowed } from "runcycles";
 
 import type {
   ActiveReservation,
-  AgentEndContext,
+  AgentEndEvent,
   BudgetGuardConfig,
   BudgetSnapshot,
-  ModelResolveContext,
+  HookContext,
+  ModelResolveEvent,
   ModelResolveResult,
-  PromptBuildContext,
-  ToolCallContext,
-  ToolResultContext,
+  OpenClawLogger,
+  PromptBuildEvent,
+  PromptBuildResult,
+  ToolCallEvent,
+  ToolCallResult,
+  ToolResultEvent,
 } from "./types.js";
 
 import {
   BudgetExhaustedError,
-  ToolBudgetDeniedError,
 } from "./types.js";
 
 import {
@@ -33,7 +36,7 @@ import {
 } from "./cycles.js";
 
 import { formatBudgetHint } from "./budget.js";
-import { createLogger, type Logger } from "./logger.js";
+import { createLogger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -41,7 +44,7 @@ import { createLogger, type Logger } from "./logger.js";
 
 let client: CyclesClient;
 let config: BudgetGuardConfig;
-let logger: Logger;
+let logger: OpenClawLogger;
 
 /** In-flight tool reservations keyed by tool callId. */
 const activeReservations = new Map<string, ActiveReservation>();
@@ -58,15 +61,19 @@ let totalReservationsMade = 0;
 // Initialization
 // ---------------------------------------------------------------------------
 
-export function initHooks(pluginConfig: BudgetGuardConfig): void {
+export function initHooks(
+  pluginConfig: BudgetGuardConfig,
+  apiLogger?: OpenClawLogger,
+): void {
   config = pluginConfig;
-  logger = createLogger(config.logLevel);
+  // Prefer the OpenClaw-provided logger, fall back to our own
+  logger = apiLogger ?? createLogger(config.logLevel);
   client = createCyclesClient(config);
   cachedSnapshot = undefined;
   cachedSnapshotAt = 0;
   totalReservationsMade = 0;
   activeReservations.clear();
-  logger.info("Plugin initialized", { tenant: config.tenant });
+  logger.info("Plugin initialized", { tenant: config.tenant } as unknown as string);
 }
 
 // ---------------------------------------------------------------------------
@@ -95,37 +102,38 @@ const DEFAULT_TOOL_COST = 100_000; // 0.001 USD in microcents as a safe default
 // ---------------------------------------------------------------------------
 
 export async function beforeModelResolve(
-  ctx: ModelResolveContext,
+  event: ModelResolveEvent,
+  _ctx: HookContext,
 ): Promise<ModelResolveResult | undefined> {
   const snapshot = await getSnapshot();
-  logger.debug(`before_model_resolve: model=${ctx.model} level=${snapshot.level}`);
+  logger.debug(`before_model_resolve: model=${event.model} level=${snapshot.level}`);
 
   if (snapshot.level === "healthy") {
     return undefined;
   }
 
   if (snapshot.level === "low") {
-    const fallback = config.modelFallbacks[ctx.model];
+    const fallback = config.modelFallbacks[event.model];
     if (fallback) {
       logger.info(
-        `Budget low (${snapshot.remaining} remaining) — downgrading model ${ctx.model} → ${fallback}`,
+        `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${fallback}`,
       );
-      return { model: fallback };
+      return { modelOverride: fallback };
     }
-    logger.debug(`Budget low but no fallback configured for model ${ctx.model}`);
+    logger.debug(`Budget low but no fallback configured for model ${event.model}`);
     return undefined;
   }
 
   // exhausted
   if (config.failClosed) {
     logger.warn(
-      `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${ctx.model}`,
+      `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
     );
     throw new BudgetExhaustedError(snapshot.remaining);
   }
 
   logger.warn(
-    `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${ctx.model}`,
+    `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
   );
   return undefined;
 }
@@ -135,34 +143,34 @@ export async function beforeModelResolve(
 // ---------------------------------------------------------------------------
 
 export async function beforePromptBuild(
-  ctx: PromptBuildContext,
-): Promise<void> {
-  if (!config.injectPromptBudgetHint) return;
+  _event: PromptBuildEvent,
+  _ctx: HookContext,
+): Promise<PromptBuildResult | undefined> {
+  if (!config.injectPromptBudgetHint) return undefined;
 
   const snapshot = await getSnapshot();
   const hint = formatBudgetHint(snapshot, config);
   logger.debug(`before_prompt_build: injecting hint (${hint.length} chars)`);
 
-  // Inject as the first system message
-  ctx.messages.unshift({
-    role: "system",
-    content: hint,
-  });
+  return { prependSystemContext: hint };
 }
 
 // ---------------------------------------------------------------------------
 // Hook: before_tool_call
 // ---------------------------------------------------------------------------
 
-export async function beforeToolCall(ctx: ToolCallContext): Promise<void> {
-  const toolName = ctx.tool.name;
+export async function beforeToolCall(
+  event: ToolCallEvent,
+  _ctx: HookContext,
+): Promise<ToolCallResult | undefined> {
+  const toolName = event.toolName;
   const estimate =
     config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
 
   const actionKind = config.defaultToolActionKindPrefix + toolName;
 
   logger.debug(
-    `before_tool_call: tool=${toolName} callId=${ctx.callId} estimate=${estimate}`,
+    `before_tool_call: tool=${toolName} callId=${event.toolCallId} estimate=${estimate}`,
   );
 
   const result = await reserveBudget(client, config, {
@@ -175,16 +183,16 @@ export async function beforeToolCall(ctx: ToolCallContext): Promise<void> {
     logger.warn(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
-    throw new ToolBudgetDeniedError(
-      toolName,
-      result.reasonCode ?? "budget reservation denied",
-    );
+    return {
+      block: true,
+      blockReason: `Budget reservation denied for tool "${toolName}": ${result.reasonCode ?? "budget limit reached"}`,
+    };
   }
 
   totalReservationsMade++;
 
   if (result.reservationId) {
-    activeReservations.set(ctx.callId, {
+    activeReservations.set(event.toolCallId, {
       reservationId: result.reservationId,
       estimate,
       toolName,
@@ -194,22 +202,26 @@ export async function beforeToolCall(ctx: ToolCallContext): Promise<void> {
 
   // Invalidate cache since budget state changed after reservation
   invalidateSnapshotCache();
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
 // Hook: after_tool_call
 // ---------------------------------------------------------------------------
 
-export async function afterToolCall(ctx: ToolResultContext): Promise<void> {
-  const reservation = activeReservations.get(ctx.callId);
+export async function afterToolCall(
+  event: ToolResultEvent,
+  _ctx: HookContext,
+): Promise<void> {
+  const reservation = activeReservations.get(event.toolCallId);
   if (!reservation) {
     logger.debug(
-      `after_tool_call: no active reservation for callId=${ctx.callId}`,
+      `after_tool_call: no active reservation for callId=${event.toolCallId}`,
     );
     return;
   }
 
-  activeReservations.delete(ctx.callId);
+  activeReservations.delete(event.toolCallId);
 
   // Use estimate as actual — no way to know real cost in phase 1 without proxy
   const actual = reservation.estimate;
@@ -232,7 +244,10 @@ export async function afterToolCall(ctx: ToolResultContext): Promise<void> {
 // Hook: agent_end
 // ---------------------------------------------------------------------------
 
-export async function agentEnd(ctx: AgentEndContext): Promise<void> {
+export async function agentEnd(
+  _event: AgentEndEvent,
+  ctx: HookContext,
+): Promise<void> {
   // Release any orphaned reservations
   if (activeReservations.size > 0) {
     logger.warn(
@@ -258,7 +273,7 @@ export async function agentEnd(ctx: AgentEndContext): Promise<void> {
     totalReservationsMade,
   };
 
-  logger.info("Agent session budget summary:", summary);
+  logger.info("Agent session budget summary:", summary as unknown as string);
 
   // Attach to context metadata if available
   if (ctx.metadata) {
