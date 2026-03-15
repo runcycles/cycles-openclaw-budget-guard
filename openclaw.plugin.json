@@ -1,7 +1,7 @@
 {
   "id": "cycles-openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -55,9 +55,14 @@
       },
       "modelFallbacks": {
         "type": "object",
-        "additionalProperties": { "type": "string" },
+        "additionalProperties": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
         "default": {},
-        "description": "Map from expensive model name to cheaper fallback model name."
+        "description": "Map from expensive model name to cheaper fallback model name or ordered array of fallback candidates."
       },
       "toolBaseCosts": {
         "type": "object",
@@ -85,6 +90,126 @@
         "enum": ["debug", "info", "warn", "error"],
         "default": "info",
         "description": "Minimum log level for plugin output."
+      },
+      "modelBaseCosts": {
+        "type": "object",
+        "additionalProperties": { "type": "number" },
+        "default": {},
+        "description": "Map from model name to estimated cost per completion in the configured currency."
+      },
+      "defaultModelCost": {
+        "type": "number",
+        "default": 500000,
+        "description": "Fallback cost per model completion when model is not in modelBaseCosts."
+      },
+      "userId": {
+        "type": "string",
+        "description": "Optional user identifier for per-user budget scoping."
+      },
+      "sessionId": {
+        "type": "string",
+        "description": "Optional session identifier for per-session budget scoping."
+      },
+      "reservationTtlMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Time-to-live in milliseconds for budget reservations."
+      },
+      "toolReservationTtls": {
+        "type": "object",
+        "additionalProperties": { "type": "number" },
+        "description": "Per-tool TTL overrides for budget reservations."
+      },
+      "snapshotCacheTtlMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "TTL in milliseconds for the budget snapshot cache."
+      },
+      "overagePolicy": {
+        "type": "string",
+        "default": "REJECT",
+        "description": "Overage policy for budget reservations (REJECT, ALLOW_IF_AVAILABLE, ALLOW_WITH_OVERDRAFT)."
+      },
+      "toolOveragePolicies": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Per-tool overage policy overrides."
+      },
+      "budgetTransitionWebhookUrl": {
+        "type": "string",
+        "description": "URL to POST budget level transition events to."
+      },
+      "toolAllowlist": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "If set, only tools matching these patterns are permitted. Supports * wildcards."
+      },
+      "toolBlocklist": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tools matching these patterns are always blocked. Supports * wildcards."
+      },
+      "lowBudgetStrategies": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["downgrade_model"],
+        "description": "Ordered list of strategies to apply when budget is low: downgrade_model, reduce_max_tokens, disable_expensive_tools, limit_remaining_calls."
+      },
+      "maxTokensWhenLow": {
+        "type": "number",
+        "default": 1024,
+        "description": "Max output tokens to request when reduce_max_tokens strategy is active."
+      },
+      "expensiveToolThreshold": {
+        "type": "number",
+        "description": "Tool cost threshold for disable_expensive_tools strategy. Defaults to lowBudgetThreshold / 10."
+      },
+      "maxRemainingCallsWhenLow": {
+        "type": "number",
+        "default": 10,
+        "description": "Max remaining tool calls when limit_remaining_calls strategy is active."
+      },
+      "retryOnDeny": {
+        "type": "boolean",
+        "default": false,
+        "description": "Retry a denied tool reservation after a short delay."
+      },
+      "retryDelayMs": {
+        "type": "number",
+        "default": 2000,
+        "description": "Delay in milliseconds before retrying a denied reservation."
+      },
+      "maxRetries": {
+        "type": "number",
+        "default": 1,
+        "description": "Maximum number of retry attempts for denied reservations."
+      },
+      "dryRun": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run in simulation mode without a live Cycles server."
+      },
+      "dryRunBudget": {
+        "type": "number",
+        "default": 100000000,
+        "description": "Simulated starting budget for dry-run mode."
+      },
+      "analyticsWebhookUrl": {
+        "type": "string",
+        "description": "URL to POST session summary data to at agent_end."
+      },
+      "toolCurrencies": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Per-tool currency overrides."
+      },
+      "modelCurrency": {
+        "type": "string",
+        "description": "Currency for model reservations (defaults to currency)."
+      },
+      "parentBudgetId": {
+        "type": "string",
+        "description": "Parent budget scope for team/pool budget visibility."
       }
     },
     "required": ["tenant"]

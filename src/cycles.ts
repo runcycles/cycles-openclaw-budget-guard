@@ -34,17 +34,34 @@ export function createCyclesClient(config: BudgetGuardConfig): CyclesClient {
 // Budget state
 // ---------------------------------------------------------------------------
 
+export interface FetchBudgetStateOptions {
+  userId?: string;
+  sessionId?: string;
+}
+
 export async function fetchBudgetState(
   client: CyclesClient,
   config: BudgetGuardConfig,
   logger: OpenClawLogger,
+  opts?: FetchBudgetStateOptions,
 ): Promise<BudgetSnapshot> {
   const params: Record<string, string> = { tenant: config.tenant };
   if (config.budgetId) {
     params.app = config.budgetId;
   }
+  // Note: userId/sessionId are used in reservation subjects via dimensions,
+  // but getBalances only supports standard subject filters (tenant, workspace,
+  // app, workflow, agent, toolset). User/session scoping is applied at the
+  // reservation level, not the balance query level.
 
-  const response = await client.getBalances(params);
+  let response;
+  try {
+    response = await client.getBalances(params);
+  } catch (err) {
+    logger.warn(`Failed to fetch balances (network error): ${err}`);
+    // Fail-open: assume healthy so we don't block on transient errors
+    return { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+  }
 
   if (!response.isSuccess) {
     logger.warn(
@@ -71,12 +88,30 @@ export async function fetchBudgetState(
   const spent = match.spent?.amount ?? 0;
   const allocated = match.allocated?.amount;
 
+  // Gap 18: Pool balance — fetch parent scope balance if configured
+  let poolRemaining: number | undefined;
+  let poolAllocated: number | undefined;
+  if (config.parentBudgetId) {
+    const poolBalance = parsed.balances.find(
+      (b) =>
+        b.remaining.unit === config.currency &&
+        (b.scope.includes(config.parentBudgetId!) ||
+          b.scopePath.includes(config.parentBudgetId!)),
+    );
+    if (poolBalance) {
+      poolRemaining = poolBalance.remaining.amount;
+      poolAllocated = poolBalance.allocated?.amount;
+    }
+  }
+
   return {
     remaining,
     reserved,
     spent,
     allocated,
     level: classifyBudget(remaining, config),
+    poolRemaining,
+    poolAllocated,
   };
 }
 
@@ -113,6 +148,11 @@ export interface ReserveOptions {
   actionKind: string;
   actionName: string;
   estimate: number;
+  ttlMs?: number;
+  overagePolicy?: string;
+  userId?: string;
+  sessionId?: string;
+  unit?: string;
 }
 
 export async function reserveBudget(
@@ -120,19 +160,38 @@ export async function reserveBudget(
   config: BudgetGuardConfig,
   opts: ReserveOptions,
 ): Promise<ReservationCreateResponse> {
+  const userId = opts.userId ?? config.userId;
+  const sessionId = opts.sessionId ?? config.sessionId;
+
+  // Build dimensions for user/session scoping (Gap 3)
+  const dimensions: Record<string, string> = {};
+  if (userId) dimensions.user = userId;
+  if (sessionId) dimensions.session = sessionId;
+
   const body: Record<string, unknown> = {
     idempotency_key: randomUUID(),
     subject: {
       tenant: config.tenant,
       ...(config.budgetId ? { app: config.budgetId } : {}),
+      ...(Object.keys(dimensions).length > 0 ? { dimensions } : {}),
     },
     action: { kind: opts.actionKind, name: opts.actionName },
-    estimate: { unit: config.currency, amount: opts.estimate },
-    ttl_ms: 60_000,
-    overage_policy: "REJECT",
+    estimate: { unit: opts.unit ?? config.currency, amount: opts.estimate },
+    ttl_ms: opts.ttlMs ?? config.reservationTtlMs,
+    overage_policy: opts.overagePolicy ?? config.overagePolicy,
   };
 
-  const response = await client.createReservation(body);
+  let response;
+  try {
+    response = await client.createReservation(body);
+  } catch {
+    // Network-level error — treat as DENY so callers can handle uniformly
+    return {
+      decision: "DENY" as ReservationCreateResponse["decision"],
+      affectedScopes: [],
+      reasonCode: "reservation_network_error",
+    };
+  }
 
   if (!response.isSuccess) {
     // Build a synthetic DENY response so callers can handle uniformly

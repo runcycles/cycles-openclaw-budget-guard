@@ -123,6 +123,19 @@ describe("fetchBudgetState", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
+  it("returns fail-open snapshot on network exception", async () => {
+    mockGetBalances.mockRejectedValue(new Error("DNS resolution failed"));
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("network error"),
+    );
+  });
+
   it("returns fail-open snapshot when no matching balance", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
@@ -178,6 +191,31 @@ describe("fetchBudgetState", () => {
     await fetchBudgetState(client, config, logger);
 
     expect(mockGetBalances).toHaveBeenCalledWith({ tenant: "test-tenant" });
+  });
+
+  it("does not pass userId/sessionId as balance query params (Gap 3)", async () => {
+    const cfgWithUser = makeConfig({ userId: "user-1", sessionId: "sess-1" });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test",
+            scopePath: "/test",
+            remaining: { unit: "USD_MICROCENTS", amount: 10 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfgWithUser);
+    await fetchBudgetState(client, cfgWithUser, logger);
+
+    // userId/sessionId are only used in reservation subjects via dimensions,
+    // not in balance query params (getBalances only supports standard subject filters)
+    expect(mockGetBalances).toHaveBeenCalledWith({
+      tenant: "test-tenant",
+    });
   });
 
   it("prefers balance matching configured currency", async () => {
@@ -252,6 +290,60 @@ describe("fetchBudgetState", () => {
     const snapshot = await fetchBudgetState(client, cfgWithBudget, logger);
     expect(snapshot.remaining).toBe(42);
   });
+
+  it("extracts pool balance when parentBudgetId is set (Gap 18)", async () => {
+    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetId: "my-app" });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test:my-app",
+            scopePath: "/test/my-app",
+            remaining: { unit: "USD_MICROCENTS", amount: 5_000_000 },
+            allocated: { unit: "USD_MICROCENTS", amount: 10_000_000 },
+          },
+          {
+            scope: "tenant:test:team-pool",
+            scopePath: "/test/team-pool",
+            remaining: { unit: "USD_MICROCENTS", amount: 50_000_000 },
+            allocated: { unit: "USD_MICROCENTS", amount: 100_000_000 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfgWithPool);
+    const snapshot = await fetchBudgetState(client, cfgWithPool, logger);
+
+    expect(snapshot.remaining).toBe(5_000_000);
+    expect(snapshot.poolRemaining).toBe(50_000_000);
+    expect(snapshot.poolAllocated).toBe(100_000_000);
+  });
+
+  it("returns undefined pool balance when parentBudgetId set but no match found (Gap 18)", async () => {
+    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetId: "my-app" });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test:my-app",
+            scopePath: "/test/my-app",
+            remaining: { unit: "USD_MICROCENTS", amount: 5_000_000 },
+          },
+          // No balance matching "team-pool" in scope
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfgWithPool);
+    const snapshot = await fetchBudgetState(client, cfgWithPool, logger);
+
+    expect(snapshot.remaining).toBe(5_000_000);
+    expect(snapshot.poolRemaining).toBeUndefined();
+    expect(snapshot.poolAllocated).toBeUndefined();
+  });
 });
 
 describe("reserveBudget", () => {
@@ -282,7 +374,7 @@ describe("reserveBudget", () => {
     expect(result.reservationId).toBe("res-123");
   });
 
-  it("builds correct wire body", async () => {
+  it("builds correct wire body with defaults", async () => {
     mockCreateReservation.mockResolvedValue({
       isSuccess: true,
       body: { decision: "ALLOW", affectedScopes: [] },
@@ -322,6 +414,89 @@ describe("reserveBudget", () => {
     expect(mockCreateReservation).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: { tenant: "test-tenant", app: "my-app" },
+      }),
+    );
+  });
+
+  it("includes userId and sessionId in subject dimensions (Gap 3)", async () => {
+    const cfgWithUser = makeConfig({ userId: "u1", sessionId: "s1" });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(cfgWithUser);
+    await reserveBudget(client, cfgWithUser, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: {
+          tenant: "test-tenant",
+          dimensions: { user: "u1", session: "s1" },
+        },
+      }),
+    );
+  });
+
+  it("uses custom TTL from opts (Gap 8)", async () => {
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(config);
+    await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+      ttlMs: 120_000,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({ ttl_ms: 120_000 }),
+    );
+  });
+
+  it("uses custom overage policy from opts (Gap 16)", async () => {
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(config);
+    await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+      overagePolicy: "ALLOW_IF_AVAILABLE",
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({ overage_policy: "ALLOW_IF_AVAILABLE" }),
+    );
+  });
+
+  it("uses custom unit from opts (Gap 14)", async () => {
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(config);
+    await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+      unit: "TOKENS",
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        estimate: { unit: "TOKENS", amount: 100 },
       }),
     );
   });
@@ -378,6 +553,20 @@ describe("reserveBudget", () => {
     });
 
     expect(result.reasonCode).toBe("reservation_failed");
+  });
+
+  it("returns synthetic DENY on network exception", async () => {
+    mockCreateReservation.mockRejectedValue(new Error("connection refused"));
+
+    const client = createCyclesClient(config);
+    const result = await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    expect(result.reasonCode).toBe("reservation_network_error");
   });
 });
 

@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-15
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.1.0
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.2.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -12,7 +12,7 @@
 | Category | Pass | Issues |
 |----------|------|--------|
 | OpenClaw Plugin Contract | 4/4 | 0 |
-| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 16/16 | 0 |
+| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 44/44 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
 | Hook Return Types | 5/5 | 0 |
@@ -25,96 +25,179 @@
 | Prompt Hint Formatting | — | 0 |
 | Session Summary & Metadata | — | 0 |
 | Published Package Contents (`files` field) | — | 0 |
+| Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant.** The `openclaw.plugin.json` manifest, `package.json` `openclaw.extensions` field, config schema, hook registrations, Cycles API usage, and error handling are all internally consistent and follow OpenClaw plugin conventions. No open issues.
-
----
-
-## Audit Scope
-
-Compared the following across plugin manifest, package metadata, and TypeScript source:
-- OpenClaw plugin contract requirements (`openclaw.extensions`, `openclaw.plugin.json`, default export signature)
-- All 16 config properties across `openclaw.plugin.json` configSchema, `BudgetGuardConfig` interface (types.ts), and `resolveConfig()` defaults (config.ts)
-- All 5 hook registrations in `index.ts` against implementations in `hooks.ts`
-- Cycles API calls (`getBalances`, `createReservation`, `commitReservation`, `releaseReservation`) against `runcycles` client methods
-- Wire-format request bodies (snake_case keys matching Cycles Protocol spec)
-- Budget classification thresholds and boundary conditions
-- Error class codes and throw sites
-- Fail-open behavior on Cycles server errors vs fail-closed on confirmed exhaustion
-- Reservation lifecycle tracking (in-flight map, orphan cleanup at agent_end)
-- Published package `files` field includes required artifacts
+**Overall: Plugin is contract-conformant and production-ready.** All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected.
 
 ---
 
-## PASS — Correctly Implemented
+## Test Coverage
 
-### OpenClaw Plugin Contract (all 3 requirements met)
+```
+File         | % Stmts | % Branch | % Funcs | % Lines
+-------------|---------|----------|---------|--------
+All files    |   99.76 |    99.16 |   98.33 |    100
+  budget.ts  |     100 |      100 |     100 |    100
+  config.ts  |     100 |      100 |     100 |    100
+  cycles.ts  |   98.46 |      100 |      90 |    100
+  dry-run.ts |     100 |      100 |     100 |    100
+  hooks.ts   |     100 |    98.60 |     100 |    100
+  index.ts   |     100 |      100 |     100 |    100
+  logger.ts  |     100 |       90 |     100 |    100
+  types.ts   |     100 |      100 |     100 |    100
+```
+
+200 tests across 8 test files. **100% line coverage, 99% branch coverage.**
+
+The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is always provided by OpenClaw, `reservation.currency` is always set at creation, and `shouldLog("error")` is always true since error is the highest log level.
+
+---
+
+## Part 1: OpenClaw Plugin Contract
+
+### Plugin Registration (all requirements met)
 
 | Requirement | Location | Status |
 |---|---|---|
-| `openclaw.extensions` in package.json | `package.json:32` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
+| `openclaw.extensions` in package.json | `package.json:28-29` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
 | `openclaw.plugin.json` manifest with `id`, `extensions`, `configSchema` | `openclaw.plugin.json` — id: `cycles-openclaw-budget-guard`, extensions: `["./dist/index.js"]` | PASS |
-| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:23` — `export default function (api) { ... }` | PASS |
-| Named exports: error types and config types | `src/index.ts:21-22` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot` | PASS |
-
-Both `package.json` `openclaw.extensions` and `openclaw.plugin.json` `extensions` point to the same entrypoint (`./dist/index.js`). The default export receives `api` with `.config`, `.logger`, and `.on()` — matching the OpenClaw plugin registration API.
-
-### Config Schema Alignment (all 16 fields match across 3 sources)
-
-| Field | plugin.json type | plugin.json default | types.ts type | config.ts default | Match |
-|---|---|---|---|---|---|
-| `enabled` | boolean | `true` | `boolean` | `true` | PASS |
-| `cyclesBaseUrl` | string | — | `string` | — (required) | PASS |
-| `cyclesApiKey` | string | — | `string` | — (required) | PASS |
-| `tenant` | string | — (required) | `string` | — (required) | PASS |
-| `budgetId` | string | — | `string?` | `undefined` | PASS |
-| `currency` | string | `USD_MICROCENTS` | `string` | `USD_MICROCENTS` | PASS |
-| `defaultModelActionKind` | string | `llm.completion` | `string` | `llm.completion` | PASS |
-| `defaultToolActionKindPrefix` | string | `tool.` | `string` | `tool.` | PASS |
-| `lowBudgetThreshold` | number | `10000000` | `number` | `10_000_000` | PASS |
-| `exhaustedThreshold` | number | `0` | `number` | `0` | PASS |
-| `modelFallbacks` | object (string→string) | `{}` | `Record<string, string>` | `{}` | PASS |
-| `toolBaseCosts` | object (string→number) | `{}` | `Record<string, number>` | `{}` | PASS |
-| `injectPromptBudgetHint` | boolean | `true` | `boolean` | `true` | PASS |
-| `maxPromptHintChars` | number | `200` | `number` | `200` | PASS |
-| `failClosed` | boolean | `true` | `boolean` | `true` | PASS |
-| `logLevel` | string (enum: debug/info/warn/error) | `info` | `"debug" \| "info" \| "warn" \| "error"` | `info` | PASS |
-
-`plugin.json` `required: ["tenant"]` matches `config.ts` which throws if `tenant` is falsy. `cyclesBaseUrl` and `cyclesApiKey` are required in config.ts but not in plugin.json because they fall back to env vars (`CYCLES_BASE_URL`, `CYCLES_API_KEY`).
-
-### Config Validation (all constraints enforced)
-
-| Validation | Location | Status |
-|---|---|---|
-| `cyclesBaseUrl` required (config or env var) | `config.ts:16-20` | PASS |
-| `cyclesApiKey` required (config or env var) | `config.ts:21-25` | PASS |
-| `tenant` required | `config.ts:26-28` | PASS |
-| `exhaustedThreshold < lowBudgetThreshold` | `config.ts:33-37` | PASS |
-| Unknown config keys silently ignored (no crash) | `resolveConfig()` only reads known fields | PASS |
+| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:32` | PASS |
+| Named exports: error types and config types | `src/index.ts:21-30` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot`, `BudgetTransitionEvent`, `BudgetStatusMetadata`, `CostEstimatorContext`, `SessionSummary` | PASS |
 
 ### Hook Registrations (all 5 match)
 
-| Hook Name | index.ts Registration | hooks.ts Implementation | Priority | Match |
-|---|---|---|---|---|
-| `before_model_resolve` | `api.on("before_model_resolve", beforeModelResolve, { priority: 10 })` | `hooks.ts:104` — `async (event, ctx) => ModelResolveResult \| undefined` | 10 | PASS |
-| `before_prompt_build` | `api.on("before_prompt_build", beforePromptBuild, { priority: 10 })` | `hooks.ts:145` — `async (event, ctx) => PromptBuildResult \| undefined` | 10 | PASS |
-| `before_tool_call` | `api.on("before_tool_call", beforeToolCall, { priority: 10 })` | `hooks.ts:162` — `async (event, ctx) => ToolCallResult \| undefined` | 10 | PASS |
-| `after_tool_call` | `api.on("after_tool_call", afterToolCall, { priority: 10 })` | `hooks.ts:212` — `async (event, ctx) => void` | 10 | PASS |
-| `agent_end` | `api.on("agent_end", agentEnd, { priority: 100 })` | `hooks.ts:247` — `async (event, ctx) => void` | 100 | PASS |
-
-Note: `agent_end` uses priority 100 (runs later) to ensure other plugins complete before cleanup. All other hooks use priority 10.
-
-### Hook Return Types (all correct for OpenClaw contract)
-
-| Hook | Return Value | OpenClaw Contract | Status |
+| Hook Name | Priority | Return Type | Status |
 |---|---|---|---|
-| `before_model_resolve` | `{ modelOverride }` or `undefined` | Model override or passthrough | PASS |
-| `before_prompt_build` | `{ prependSystemContext }` or `undefined` | System prompt injection or passthrough | PASS |
-| `before_tool_call` | `{ block: true, blockReason }` or `undefined` | Block tool or passthrough | PASS |
-| `after_tool_call` | `void` | No return value expected | PASS |
-| `agent_end` | `void` | No return value expected | PASS |
+| `before_model_resolve` | 10 | `ModelResolveResult \| undefined` | PASS |
+| `before_prompt_build` | 10 | `PromptBuildResult \| undefined` | PASS |
+| `before_tool_call` | 10 | `ToolCallResult \| undefined` | PASS |
+| `after_tool_call` | 10 | `void` | PASS |
+| `agent_end` | 100 | `void` | PASS |
 
-### Cycles API Usage (all 4 endpoints correct)
+### Config Schema Alignment (all 44 fields match across 3 sources)
+
+**Core fields (original 16):**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `enabled` | boolean | `boolean` | `true` | PASS |
+| `cyclesBaseUrl` | string | `string` | env fallback | PASS |
+| `cyclesApiKey` | string | `string` | env fallback | PASS |
+| `tenant` | string | `string` | required | PASS |
+| `budgetId` | string | `string?` | `undefined` | PASS |
+| `currency` | string | `string` | `USD_MICROCENTS` | PASS |
+| `defaultModelActionKind` | string | `string` | `llm.completion` | PASS |
+| `defaultToolActionKindPrefix` | string | `string` | `tool.` | PASS |
+| `lowBudgetThreshold` | number | `number` | `10_000_000` | PASS |
+| `exhaustedThreshold` | number | `number` | `0` | PASS |
+| `modelFallbacks` | object | `Record<string, string \| string[]>` | `{}` | PASS |
+| `toolBaseCosts` | object | `Record<string, number>` | `{}` | PASS |
+| `injectPromptBudgetHint` | boolean | `boolean` | `true` | PASS |
+| `maxPromptHintChars` | number | `number` | `200` | PASS |
+| `failClosed` | boolean | `boolean` | `true` | PASS |
+| `logLevel` | string enum | `string` | `info` | PASS |
+
+**Gap 1 — Model reservation costs:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `modelBaseCosts` | object | `Record<string, number>` | `{}` | PASS |
+| `defaultModelCost` | number | `number` | `500_000` | PASS |
+
+**Gap 2 — Custom cost estimation:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `costEstimator` | — (not JSON-serializable) | `(ctx: CostEstimatorContext) => number \| undefined` | `undefined` | PASS |
+
+**Gap 3 — Per-user/session scoping:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `userId` | string | `string?` | `undefined` | PASS |
+| `sessionId` | string | `string?` | `undefined` | PASS |
+
+**Gap 5 — Budget transition alerts:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `onBudgetTransition` | — (not JSON-serializable) | `(event: BudgetTransitionEvent) => void` | `undefined` | PASS |
+| `budgetTransitionWebhookUrl` | string | `string?` | `undefined` | PASS |
+
+**Gap 7 — Tool allowlist/blocklist:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `toolAllowlist` | string[] | `string[]?` | `undefined` | PASS |
+| `toolBlocklist` | string[] | `string[]?` | `undefined` | PASS |
+
+**Gap 8 — Reservation TTL:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `reservationTtlMs` | number | `number` | `60_000` | PASS |
+| `toolReservationTtls` | object | `Record<string, number>?` | `undefined` | PASS |
+
+**Gap 10 — Dry-run mode:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `dryRun` | boolean | `boolean` | `false` | PASS |
+| `dryRunBudget` | number | `number` | `100_000_000` | PASS |
+
+**Gap 11 — Snapshot caching:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `snapshotCacheTtlMs` | number | `number` | `5_000` | PASS |
+
+**Gap 13 — Low-budget strategies:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `lowBudgetStrategies` | string[] | `string[]` | `["downgrade_model"]` | PASS |
+| `maxTokensWhenLow` | number | `number` | `1024` | PASS |
+| `expensiveToolThreshold` | number | `number?` | `undefined` | PASS |
+| `maxRemainingCallsWhenLow` | number | `number` | `10` | PASS |
+
+**Gap 14 — Multi-currency:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `toolCurrencies` | object | `Record<string, string>?` | `undefined` | PASS |
+| `modelCurrency` | string | `string?` | `undefined` | PASS |
+
+**Gap 15 — Session analytics:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `onSessionEnd` | — (not JSON-serializable) | `(summary: SessionSummary) => void \| Promise<void>` | `undefined` | PASS |
+| `analyticsWebhookUrl` | string | `string?` | `undefined` | PASS |
+
+**Gap 16 — Overage policies:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `overagePolicy` | string | `string` | `REJECT` | PASS |
+| `toolOveragePolicies` | object | `Record<string, string>?` | `undefined` | PASS |
+
+**Gap 17 — Retry on deny:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `retryOnDeny` | boolean | `boolean` | `false` | PASS |
+| `retryDelayMs` | number | `number` | `2_000` | PASS |
+| `maxRetries` | number | `number` | `1` | PASS |
+
+**Gap 18 — Budget pools:**
+
+| Field | plugin.json | types.ts | config.ts default | Match |
+|---|---|---|---|---|
+| `parentBudgetId` | string | `string?` | `undefined` | PASS |
+
+---
+
+## Part 2: Cycles API Usage
 
 | Operation | Client Method | Wire-Format Body Keys | Status |
 |---|---|---|---|
@@ -123,86 +206,235 @@ Note: `agent_end` uses priority 100 (runs later) to ensure other plugins complet
 | Commit reservation | `client.commitReservation(id, body)` | `idempotency_key`, `actual` | PASS |
 | Release reservation | `client.releaseReservation(id, body)` | `idempotency_key`, `reason` | PASS |
 
-All request bodies use snake_case wire-format keys (`idempotency_key`, `ttl_ms`, `overage_policy`) matching the Cycles Protocol spec. The `runcycles` client handles HTTP transport and response parsing.
+All request bodies use snake_case wire-format keys matching the Cycles Protocol spec.
 
-**Reservation parameters:**
-- `ttl_ms: 60_000` (60s) — reasonable timeout for tool execution
-- `overage_policy: "REJECT"` — denies reservation when budget is exceeded
-- `idempotency_key: randomUUID()` — unique per request via `node:crypto`
-- `subject: { tenant, app? }` — `budgetId` config is threaded as `app` field when set, matching the balance query scope
+---
 
-**Response handling:**
-- `balanceResponseFromWire()` and `reservationCreateResponseFromWire()` from `runcycles` used for all response parsing
-- `isAllowed()` from `runcycles` used for decision checking (covers `ALLOW` and `ALLOW_WITH_CAPS`)
+## Part 3: Feature Gap Implementation Audit
 
-### Budget Classification Logic (all 3 levels correct)
+| Gap | Feature | Implemented In | Tested | Status |
+|-----|---------|---------------|--------|--------|
+| 1 | Model call budget reservations | hooks.ts (beforeModelResolve) | hooks.test.ts (7 tests) | PASS |
+| 2 | Custom cost estimation callback | hooks.ts (afterToolCall) | hooks.test.ts (3 tests) | PASS |
+| 3 | Per-user/session budget scoping | hooks.ts, cycles.ts | hooks.test.ts, cycles.test.ts | PASS |
+| 4 | Chained model fallbacks | hooks.ts (beforeModelResolve) | hooks.test.ts (1 test) | PASS |
+| 5 | Budget transition detection | hooks.ts (getSnapshot) | hooks.test.ts (3 tests) | PASS |
+| 6 | Per-tool cost breakdown tracking | hooks.ts (trackCost) | hooks.test.ts (1 test) | PASS |
+| 7 | Tool allowlist/blocklist | budget.ts (isToolPermitted) | budget.test.ts (10 tests), hooks.test.ts (2 tests) | PASS |
+| 8 | Configurable reservation TTL | cycles.ts, hooks.ts | cycles.test.ts, hooks.test.ts (3 tests) | PASS |
+| 9 | Budget forecast projections | hooks.ts (buildForecast), budget.ts (formatBudgetHint) | budget.test.ts (2 tests), hooks.test.ts (2 tests) | PASS |
+| 10 | Dry-run simulation mode | dry-run.ts (DryRunClient) | dry-run.test.ts (8 tests), hooks.test.ts (1 test) | PASS |
+| 11 | Configurable snapshot cache TTL | hooks.ts (getSnapshot) | hooks.test.ts (2 tests) | PASS |
+| 12 | Budget status in ctx.metadata | hooks.ts (attachBudgetStatus) | hooks.test.ts (1 test) | PASS |
+| 13 | Graceful degradation strategies | hooks.ts (beforeToolCall, beforePromptBuild, beforeModelResolve) | hooks.test.ts (6 tests) | PASS |
+| 14 | Multi-currency support | cycles.ts, hooks.ts | cycles.test.ts, hooks.test.ts (2 tests) | PASS |
+| 15 | Cross-session analytics | hooks.ts (agentEnd) | hooks.test.ts (3 tests) | PASS |
+| 16 | Overage policies | cycles.ts, hooks.ts | cycles.test.ts, hooks.test.ts (2 tests) | PASS |
+| 17 | Retry on reservation deny | hooks.ts (beforeToolCall) | hooks.test.ts (3 tests) | PASS |
+| 18 | Budget pool/hierarchy visibility | cycles.ts, budget.ts | cycles.test.ts, budget.test.ts (1 test) | PASS |
 
-| Level | Condition (budget.ts:9-11) | Status |
-|---|---|---|
-| `exhausted` | `remaining <= exhaustedThreshold` | PASS |
-| `low` | `remaining <= lowBudgetThreshold` (and not exhausted) | PASS |
-| `healthy` | `remaining > lowBudgetThreshold` | PASS |
+---
 
-Order of evaluation is correct: exhausted is checked first, then low, then healthy. Boundary values are handled correctly — `remaining == lowBudgetThreshold` classifies as `low`, `remaining == exhaustedThreshold` classifies as `exhausted`.
+## Part 4: Code Review Findings
 
-### Error Types & Codes (all correct)
+### Issues Fixed
 
-| Error Class | Code | Thrown By | Status |
-|---|---|---|---|
-| `BudgetExhaustedError` | `BUDGET_EXHAUSTED` | `hooks.ts:132` — `before_model_resolve` when exhausted and `failClosed=true` | PASS |
-| `ToolBudgetDeniedError` | `TOOL_BUDGET_DENIED` | Exported for consumers; `before_tool_call` returns `{ block, blockReason }` instead of throwing | PASS |
+#### 1. costEstimator callback could crash afterToolCall
 
-Both extend `Error` with a typed `code` property and `name` set to the class name.
+**File:** `src/hooks.ts:534-546`
+**Severity:** Medium — Exception safety
 
-### Fail-Open / Fail-Closed Behavior (all correct)
+The `costEstimator` user-provided callback was invoked without a try-catch. If it threw, `afterToolCall` would propagate the error, leaving the reservation uncommitted.
+
+**Fix:** Wrapped in try-catch; on error, logs a warning and falls back to the original estimate. Test added.
+
+#### 2. Model reservation not cleaned up if commitUsage throws
+
+**File:** `src/hooks.ts:319-324`
+**Severity:** Medium — Exception safety
+
+If `commitUsage()` threw during immediate model commit, the reservation would remain in the `activeReservations` map and be incorrectly released during `agentEnd()` cleanup.
+
+**Fix:** Wrapped commit in try-finally so `activeReservations.delete()` runs regardless.
+
+#### 3. Logger called with object argument via unsafe type cast
+
+**File:** `src/hooks.ts:101-107, 613`
+**Severity:** Low — Type safety
+
+Logger calls used `{ ... } as unknown as string` to pass structured data. This violated the `OpenClawLogger` type contract.
+
+**Fix:** Replaced with template literal strings that embed relevant values directly.
+
+#### 4. Network exceptions bypass fail-open logic in fetchBudgetState
+
+**File:** `src/cycles.ts:57`
+**Severity:** High — Error handling
+
+`client.getBalances()` was called without try-catch. HTTP error responses were handled (fail-open), but raw network exceptions (DNS failure, timeout) would propagate up and crash hook handlers regardless of `failClosed` setting.
+
+**Fix:** Wrapped `client.getBalances()` in try-catch; on network error, logs a warning and returns fail-open healthy snapshot. Test added.
+
+#### 5. Network exceptions bypass synthetic DENY in reserveBudget
+
+**File:** `src/cycles.ts:177`
+**Severity:** High — Error handling
+
+`client.createReservation()` was called without try-catch. A network-level exception would propagate instead of returning a synthetic DENY response.
+
+**Fix:** Wrapped `client.createReservation()` in try-catch; on error, returns synthetic DENY with `reasonCode: "reservation_network_error"`. Test added.
+
+#### 6. Model reservation key vulnerable to async interleaving
+
+**File:** `src/hooks.ts:306-326`
+**Severity:** Medium — Concurrency safety
+
+The model reservation key was constructed with `++modelReservationCounter`, stored, and then re-constructed in a `finally` block using the same counter. Between the `await commitUsage()` and the `finally`, another concurrent `beforeModelResolve` call could increment the counter, causing the wrong key to be deleted.
+
+**Fix:** Captured the key as a `const` before the async operation and reused the same variable in `finally`.
+
+#### 7. DryRunClient hardcoded currency ignores configured currency
+
+**File:** `src/dry-run.ts:31-34`
+**Severity:** Low — Config mismatch
+
+DryRunClient hardcoded `"USD_MICROCENTS"` for all balance units. When users configured a different currency (e.g., `"TOKENS"`), `findMatchingBalance` would fall back to the first balance regardless of currency match.
+
+**Fix:** Added `currency` constructor parameter. `initHooks` passes `config.currency`. Test updated.
+
+### Issues Accepted (No Fix Needed)
+
+#### 4. Stale snapshot.level in retry success path
+
+**File:** `src/hooks.ts:474`
+**Severity:** Low
+
+In the retry loop, `snapshot.level` from the start of `beforeToolCall` is used after cache invalidation. The budget level could have changed between retries.
+
+**Accepted:** Retry window is short (default 2s). Worst case is one extra conservative decrement of `remainingCallsAllowed`. Not worth the complexity of re-fetching.
+
+#### 5. fireWebhook is fire-and-forget
+
+**File:** `src/hooks.ts:205-213`
+**Severity:** Low
+
+Webhooks are non-blocking best-effort. Errors are caught and logged but delivery is not guaranteed.
+
+**Accepted:** Intentional design. Webhooks must not block the hot path. Users needing guaranteed delivery should use the `onBudgetTransition` callback.
+
+#### 6. Unsafe type casts at API boundaries
+
+**File:** `src/cycles.ts:68,178,184` and `src/dry-run.ts:42,71`
+**Severity:** Low
+
+Response bodies from runcycles are cast without runtime validation.
+
+**Accepted:** The runcycles SDK validates responses internally. `DryRunClient` is only called by our own typed code.
+
+#### 7. Module-level mutable state
+
+**File:** `src/hooks.ts:48-85`
+**Severity:** Low
+
+Plugin uses module-level variables reset in `initHooks()`. Not safely reentrant for concurrent instances.
+
+**Accepted:** OpenClaw guarantees single-instance initialization. Module-level state is the standard plugin pattern. `initHooks()` resets all state completely.
+
+#### 8. Model costs are estimated, not actual
+
+**File:** `src/hooks.ts:283-332`
+**Severity:** Informational
+
+Model reservations are committed with estimated cost because OpenClaw has no `after_model_resolve` hook.
+
+**Accepted:** Known limitation. Accurate model cost tracking requires a proxy/gateway layer measuring actual token usage.
+
+---
+
+## Part 5: Fail-Open / Fail-Closed Behavior
 
 | Scenario | Behavior | Location | Status |
 |---|---|---|---|
-| Cycles server unreachable (balance fetch) | Fail-open: returns `{ remaining: Infinity, level: "healthy" }` | `cycles.ts:49-54` | PASS |
-| No matching balance in response | Fail-open: returns `{ remaining: Infinity, level: "healthy" }` | `cycles.ts:64-67` | PASS |
-| Commit failure in `after_tool_call` | Best-effort: logged, never throws | `cycles.ts:159-172` (try/catch) | PASS |
-| Budget confirmed exhausted + `failClosed=true` | Fail-closed: throws `BudgetExhaustedError` | `hooks.ts:128-133` | PASS |
+| Cycles server unreachable (balance fetch) | Fail-open: `{ remaining: Infinity, level: "healthy" }` | `cycles.ts:49-54` | PASS |
+| No matching balance in response | Fail-open: `{ remaining: Infinity, level: "healthy" }` | `cycles.ts:64-67` | PASS |
+| Commit failure in `after_tool_call` | Best-effort: logged, never throws | `cycles.ts:159-172` | PASS |
+| Budget confirmed exhausted + `failClosed=true` | Fail-closed: throws `BudgetExhaustedError` | `hooks.ts:271-277` | PASS |
 
-The `failClosed` config only controls behavior when budget is **confirmed exhausted** by a successful Cycles API response — not when the budget service is unreachable.
+---
 
-### Reservation Lifecycle (correct)
+## Part 6: Runcycles Client Spec Consistency Review
 
-- **Reserve:** `before_tool_call` creates a reservation and stores `{ reservationId, estimate, toolName, createdAt }` in an in-memory `Map` keyed by `toolCallId`
-- **Commit:** `after_tool_call` looks up the reservation by `toolCallId`, commits `actual = estimate` (no proxy to measure real cost in phase 1), then deletes from map
-- **Orphan cleanup:** `agent_end` releases all remaining reservations via `Promise.allSettled()`, then clears the map
-- **Cache invalidation:** Snapshot cache is invalidated after every reserve and commit to ensure fresh budget state
+Verified all plugin API usage against the installed `runcycles` ^0.1.1 TypeScript client (`node_modules/runcycles/dist/index.d.ts`). Three spec inconsistencies were found and corrected:
 
-### Snapshot Caching (correct)
+### Issue 1: Subject field misuse — user/session as top-level fields (FIXED)
 
-- TTL: `SNAPSHOT_TTL_MS = 5_000` (5 seconds)
-- Freshness check: `Date.now() - cachedSnapshotAt < SNAPSHOT_TTL_MS`
-- Explicit invalidation after reservation create and commit (`invalidateSnapshotCache()`)
-- Explicit invalidation at `agent_end` before fetching final summary
+**File:** `src/cycles.ts` (reserveBudget)
+**Severity:** High — Would cause validation failures
 
-### Prompt Hint Formatting (correct)
+The `Subject` interface only supports: `tenant`, `workspace`, `app`, `workflow`, `agent`, `toolset`, `dimensions`. User and session identifiers were incorrectly passed as top-level subject fields.
 
-- `formatBudgetHint()` builds a deterministic string: remaining amount, budget level warning, and percentage if `allocated` is available
-- Truncated to `maxPromptHintChars` with `"..."` suffix if over limit
-- Only injected when `injectPromptBudgetHint` is `true` (checked in `beforePromptBuild`)
+**Fix:** Moved `userId` and `sessionId` into `subject.dimensions`:
+```typescript
+const dimensions: Record<string, string> = {};
+if (userId) dimensions.user = userId;
+if (sessionId) dimensions.session = sessionId;
+// ...
+subject: {
+  tenant: config.tenant,
+  ...(config.budgetId ? { app: config.budgetId } : {}),
+  ...(Object.keys(dimensions).length > 0 ? { dimensions } : {}),
+},
+```
 
-### Session Summary & Metadata (correct)
+### Issue 2: Invalid balance query parameters (FIXED)
 
-- `agent_end` builds summary with: `remaining`, `spent`, `reserved`, `allocated`, `level`, `totalReservationsMade`
-- Attached to `ctx.metadata["cycles-budget-guard"]` if `ctx.metadata` exists
-- Summary logged at `info` level
+**File:** `src/cycles.ts` (fetchBudgetState)
+**Severity:** Medium — Parameters would be silently ignored
 
-### Published Package Contents (correct)
+`getBalances()` only accepts `BALANCE_FILTER_PARAMS`: `tenant`, `workspace`, `app`, `workflow`, `agent`, `toolset`. Passing `user` or `session` as query params had no effect.
 
-`package.json` `files` field: `["dist", "openclaw.plugin.json", "LICENSE", "README.md"]`
+**Fix:** Removed `user`/`session` from balance query params. User/session scoping is applied at reservation time only, via `dimensions`.
 
-All required artifacts are included:
-- `dist/index.js` — compiled plugin entrypoint (referenced by both `openclaw.extensions` and `openclaw.plugin.json`)
-- `openclaw.plugin.json` — plugin manifest with config schema
-- `LICENSE` — Apache-2.0
-- `README.md` — documentation
+### Issue 3: Overage policy enum confusion (FIXED)
+
+**Files:** `openclaw.plugin.json`, `README.md`, test files
+**Severity:** Medium — Documentation/test correctness
+
+Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` enum values). The correct `CommitOveragePolicy` enum values are:
+- `REJECT` (default)
+- `ALLOW_IF_AVAILABLE`
+- `ALLOW_WITH_OVERDRAFT`
+
+**Fix:** Updated all references across plugin.json, README.md, and test files.
+
+### Verification Summary
+
+| API Surface | Status |
+|---|---|
+| `CyclesConfig` constructor (baseUrl, apiKey, tenant) | CORRECT |
+| `CyclesClient.getBalances(params)` — filter params | CORRECT (after fix) |
+| `CyclesClient.createReservation(body)` — wire format | CORRECT (after fix) |
+| `CyclesClient.commitReservation(id, body)` — wire format | CORRECT |
+| `CyclesClient.releaseReservation(id, body)` — wire format | CORRECT |
+| `Subject` interface — standard fields + dimensions | CORRECT (after fix) |
+| `Balance` interface — field access | CORRECT |
+| `ReservationCreateResponse` — decision/reservationId | CORRECT |
+| `CommitOveragePolicy` enum — REJECT/ALLOW_IF_AVAILABLE/ALLOW_WITH_OVERDRAFT | CORRECT (after fix) |
+| `Decision` enum — ALLOW/ALLOW_WITH_CAPS/DENY | CORRECT |
+| `isAllowed()` helper usage | CORRECT |
+| Wire format mappers (balanceResponseFromWire, reservationCreateResponseFromWire) | CORRECT |
+
+---
+
+## Part 7: Recommendations
+
+1. **Runtime validation for Cycles API responses** — Consider zod or lightweight validator for `fetchBudgetState` to catch API contract changes early.
+2. **Model cost callback** — If OpenClaw adds `after_model_resolve`, add `modelCostEstimator` similar to `costEstimator`.
+3. **Structured logging** — Extend `OpenClawLogger` to accept metadata objects natively.
+4. **Webhook retry** — Optional retry for critical webhooks (budget transitions), gated behind a config flag.
 
 ---
 
 ## Verdict
 
-The plugin is **fully contract-conformant** with OpenClaw plugin requirements and internally consistent across all configuration, hook, and Cycles API integration surfaces. The `openclaw.plugin.json` manifest, `package.json` `openclaw.extensions` field, 16 config properties, 5 hook registrations, 4 Cycles API operations, budget classification logic, error types, and fail-open/fail-closed behavior are all correct. No open issues.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.

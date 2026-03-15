@@ -11,6 +11,7 @@ import type {
   ActiveReservation,
   AgentEndEvent,
   BudgetGuardConfig,
+  BudgetLevel,
   BudgetSnapshot,
   HookContext,
   ModelResolveEvent,
@@ -18,6 +19,7 @@ import type {
   OpenClawLogger,
   PromptBuildEvent,
   PromptBuildResult,
+  SessionSummary,
   ToolCallEvent,
   ToolCallResult,
   ToolResultEvent,
@@ -35,8 +37,9 @@ import {
   releaseReservation,
 } from "./cycles.js";
 
-import { formatBudgetHint } from "./budget.js";
+import { formatBudgetHint, isToolPermitted, type ForecastData } from "./budget.js";
 import { createLogger } from "./logger.js";
+import { DryRunClient } from "./dry-run.js";
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -46,16 +49,40 @@ let client: CyclesClient;
 let config: BudgetGuardConfig;
 let logger: OpenClawLogger;
 
-/** In-flight tool reservations keyed by tool callId. */
+/** In-flight reservations keyed by callId (tools) or model:<uuid> (models). */
 const activeReservations = new Map<string, ActiveReservation>();
 
-/** Cached budget snapshot with simple time-based freshness. */
+/** Cached budget snapshot with configurable time-based freshness. */
 let cachedSnapshot: BudgetSnapshot | undefined;
 let cachedSnapshotAt = 0;
-const SNAPSHOT_TTL_MS = 5_000;
 
 /** Session-level counters for the final summary. */
 let totalReservationsMade = 0;
+
+/** Gap 5: Last known budget level for transition detection. */
+let lastKnownLevel: BudgetLevel | undefined;
+
+/** Gap 6: Per-component cost breakdown. */
+const costBreakdown = new Map<string, { count: number; totalCost: number }>();
+
+/** Gap 9: Running totals for forecast. */
+let totalToolCost = 0;
+let totalToolCalls = 0;
+let totalModelCost = 0;
+let totalModelCalls = 0;
+
+/** Gap 13: Remaining calls counter for limit_remaining_calls strategy. */
+let remainingCallsAllowed = 0;
+
+/** Gap 15: Session start time. */
+let sessionStartedAt = 0;
+
+/** Resolved userId/sessionId (from config + ctx overrides). */
+let resolvedUserId: string | undefined;
+let resolvedSessionId: string | undefined;
+
+// Monotonic counter for synthetic model reservation keys
+let modelReservationCounter = 0;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -66,27 +93,69 @@ export function initHooks(
   apiLogger?: OpenClawLogger,
 ): void {
   config = pluginConfig;
-  // Prefer the OpenClaw-provided logger, fall back to our own
   logger = apiLogger ?? createLogger(config.logLevel);
-  client = createCyclesClient(config);
+
+  // Gap 10: Dry-run mode
+  if (config.dryRun) {
+    client = new DryRunClient(config.dryRunBudget, config.currency) as unknown as CyclesClient;
+    logger.info(
+      `[DRY-RUN] Plugin initialized with simulated budget=${config.dryRunBudget} tenant=${config.tenant}`,
+    );
+  } else {
+    client = createCyclesClient(config);
+    logger.info(`Plugin initialized tenant=${config.tenant}`);
+  }
+
   cachedSnapshot = undefined;
   cachedSnapshotAt = 0;
   totalReservationsMade = 0;
+  lastKnownLevel = undefined;
   activeReservations.clear();
-  logger.info("Plugin initialized", { tenant: config.tenant } as unknown as string);
+  costBreakdown.clear();
+  totalToolCost = 0;
+  totalToolCalls = 0;
+  totalModelCost = 0;
+  totalModelCalls = 0;
+  remainingCallsAllowed = config.maxRemainingCallsWhenLow;
+  sessionStartedAt = Date.now();
+  resolvedUserId = config.userId;
+  resolvedSessionId = config.sessionId;
+  modelReservationCounter = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-async function getSnapshot(): Promise<BudgetSnapshot> {
+async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
   const now = Date.now();
-  if (cachedSnapshot && now - cachedSnapshotAt < SNAPSHOT_TTL_MS) {
+  if (cachedSnapshot && now - cachedSnapshotAt < config.snapshotCacheTtlMs) {
     return cachedSnapshot;
   }
-  cachedSnapshot = await fetchBudgetState(client, config, logger);
+  const userId = (ctx?.metadata?.userId as string | undefined) ?? resolvedUserId;
+  const sessionId = (ctx?.metadata?.sessionId as string | undefined) ?? resolvedSessionId;
+  cachedSnapshot = await fetchBudgetState(client, config, logger, { userId, sessionId });
   cachedSnapshotAt = now;
+
+  // Gap 5: Detect budget level transitions
+  if (lastKnownLevel !== undefined && cachedSnapshot.level !== lastKnownLevel) {
+    const event = {
+      previousLevel: lastKnownLevel,
+      currentLevel: cachedSnapshot.level,
+      remaining: cachedSnapshot.remaining,
+      timestamp: now,
+    };
+    try {
+      config.onBudgetTransition?.(event);
+    } catch (err) {
+      logger.warn("onBudgetTransition callback error:", err);
+    }
+    if (config.budgetTransitionWebhookUrl) {
+      fireWebhook(config.budgetTransitionWebhookUrl, event);
+    }
+  }
+  lastKnownLevel = cachedSnapshot.level;
+
   return cachedSnapshot;
 }
 
@@ -95,7 +164,60 @@ function invalidateSnapshotCache(): void {
   cachedSnapshotAt = 0;
 }
 
-const DEFAULT_TOOL_COST = 100_000; // 0.001 USD in microcents as a safe default
+/** Gap 12: Attach budget status to ctx.metadata for end-user visibility. */
+function attachBudgetStatus(ctx: HookContext, snapshot: BudgetSnapshot): void {
+  if (ctx.metadata) {
+    ctx.metadata["cycles-budget-guard-status"] = {
+      level: snapshot.level,
+      remaining: snapshot.remaining,
+      allocated: snapshot.allocated,
+      percentRemaining:
+        snapshot.allocated && snapshot.allocated > 0
+          ? Math.round((snapshot.remaining / snapshot.allocated) * 100)
+          : undefined,
+    };
+  }
+}
+
+/** Gap 6: Update cost breakdown tracking. */
+function trackCost(key: string, cost: number): void {
+  const entry = costBreakdown.get(key);
+  if (entry) {
+    entry.count++;
+    entry.totalCost += cost;
+  } else {
+    costBreakdown.set(key, { count: 1, totalCost: cost });
+  }
+}
+
+/** Gap 9: Build forecast data from running totals. */
+function buildForecast(): ForecastData {
+  return {
+    avgToolCost: totalToolCalls > 0 ? totalToolCost / totalToolCalls : 0,
+    avgModelCost: totalModelCalls > 0 ? totalModelCost / totalModelCalls : 0,
+    totalToolCalls,
+    totalModelCalls,
+  };
+}
+
+/** Fire a webhook POST (best-effort, non-blocking). */
+function fireWebhook(url: string, payload: unknown): void {
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch((err) => {
+    logger.warn(`Webhook POST to ${url} failed:`, err);
+  });
+}
+
+/** Gap 17: Sleep utility for retry. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const DEFAULT_TOOL_COST = 100_000;
+const DEFAULT_MODEL_COST = 500_000;
 
 // ---------------------------------------------------------------------------
 // Hook: before_model_resolve
@@ -103,38 +225,117 @@ const DEFAULT_TOOL_COST = 100_000; // 0.001 USD in microcents as a safe default
 
 export async function beforeModelResolve(
   event: ModelResolveEvent,
-  _ctx: HookContext,
+  ctx: HookContext,
 ): Promise<ModelResolveResult | undefined> {
-  const snapshot = await getSnapshot();
+  // Gap 3: Resolve user/session from ctx if available
+  if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
+  if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
+
+  const snapshot = await getSnapshot(ctx);
   logger.debug(`before_model_resolve: model=${event.model} level=${snapshot.level}`);
 
-  if (snapshot.level === "healthy") {
-    return undefined;
-  }
+  // Gap 12: Attach status for end-user visibility
+  attachBudgetStatus(ctx, snapshot);
+
+  let resolvedModel = event.model;
 
   if (snapshot.level === "low") {
-    const fallback = config.modelFallbacks[event.model];
-    if (fallback) {
-      logger.info(
-        `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${fallback}`,
-      );
-      return { modelOverride: fallback };
+    // Gap 4: Chained model fallbacks
+    const fallbacks = config.modelFallbacks[event.model];
+    if (fallbacks) {
+      const candidates = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
+      for (const candidate of candidates) {
+        const cost = config.modelBaseCosts[candidate] ?? config.defaultModelCost;
+        if (cost <= snapshot.remaining) {
+          logger.info(
+            `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${candidate}`,
+          );
+          resolvedModel = candidate;
+          break;
+        }
+      }
+    } else {
+      logger.debug(`Budget low but no fallback configured for model ${event.model}`);
     }
-    logger.debug(`Budget low but no fallback configured for model ${event.model}`);
-    return undefined;
+
+    // Gap 13: Apply low-budget strategies
+    if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
+      if (config.failClosed) {
+        throw new BudgetExhaustedError(snapshot.remaining);
+      }
+      logger.warn("Low budget call limit reached, failClosed=false — allowing");
+    }
   }
 
-  // exhausted
-  if (config.failClosed) {
+  if (snapshot.level === "exhausted") {
+    if (config.failClosed) {
+      logger.warn(
+        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
+      );
+      throw new BudgetExhaustedError(snapshot.remaining);
+    }
     logger.warn(
-      `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
+      `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
     );
-    throw new BudgetExhaustedError(snapshot.remaining);
   }
 
-  logger.warn(
-    `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
-  );
+  // Gap 1: Reserve budget for model call
+  const modelCost = config.modelBaseCosts[resolvedModel] ?? config.defaultModelCost;
+  const modelCurrency = config.modelCurrency ?? config.currency;
+  const actionKind = config.defaultModelActionKind;
+
+  const result = await reserveBudget(client, config, {
+    actionKind,
+    actionName: resolvedModel,
+    estimate: modelCost,
+    unit: modelCurrency,
+  });
+
+  if (!isAllowed(result.decision)) {
+    if (config.failClosed) {
+      logger.warn(
+        `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
+      );
+      throw new BudgetExhaustedError(snapshot.remaining);
+    }
+    logger.warn(
+      `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
+    );
+  } else {
+    totalReservationsMade++;
+    const reservationKey = result.reservationId
+      ? `model:${++modelReservationCounter}`
+      : undefined;
+
+    if (result.reservationId && reservationKey) {
+      activeReservations.set(reservationKey, {
+        reservationId: result.reservationId,
+        estimate: modelCost,
+        toolName: resolvedModel,
+        createdAt: Date.now(),
+        kind: "model",
+        currency: modelCurrency,
+      });
+
+      // Commit immediately (no after_model_resolve hook available)
+      try {
+        await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
+      } finally {
+        activeReservations.delete(reservationKey);
+      }
+    }
+
+    // Gap 6 & 9: Track model cost
+    trackCost(`model:${resolvedModel}`, modelCost);
+    totalModelCost += modelCost;
+    totalModelCalls++;
+
+    invalidateSnapshotCache();
+  }
+
+  if (resolvedModel !== event.model) {
+    return { modelOverride: resolvedModel };
+  }
   return undefined;
 }
 
@@ -144,15 +345,33 @@ export async function beforeModelResolve(
 
 export async function beforePromptBuild(
   _event: PromptBuildEvent,
-  _ctx: HookContext,
+  ctx: HookContext,
 ): Promise<PromptBuildResult | undefined> {
   if (!config.injectPromptBudgetHint) return undefined;
 
-  const snapshot = await getSnapshot();
-  const hint = formatBudgetHint(snapshot, config);
+  const snapshot = await getSnapshot(ctx);
+
+  // Gap 12: Attach status
+  attachBudgetStatus(ctx, snapshot);
+
+  // Gap 9: Include forecast data in hint
+  const forecast = buildForecast();
+  const hint = formatBudgetHint(snapshot, config, forecast);
   logger.debug(`before_prompt_build: injecting hint (${hint.length} chars)`);
 
-  return { prependSystemContext: hint };
+  // Gap 13: Append max-tokens guidance when strategy is active
+  let fullHint = hint;
+  if (
+    snapshot.level === "low" &&
+    config.lowBudgetStrategies.includes("reduce_max_tokens")
+  ) {
+    fullHint += ` Limit responses to ${config.maxTokensWhenLow} tokens.`;
+    if (fullHint.length > config.maxPromptHintChars) {
+      fullHint = fullHint.slice(0, config.maxPromptHintChars - 3) + "...";
+    }
+  }
+
+  return { prependSystemContext: fullHint };
 }
 
 // ---------------------------------------------------------------------------
@@ -161,13 +380,56 @@ export async function beforePromptBuild(
 
 export async function beforeToolCall(
   event: ToolCallEvent,
-  _ctx: HookContext,
+  ctx: HookContext,
 ): Promise<ToolCallResult | undefined> {
   const toolName = event.toolName;
-  const estimate =
-    config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
+
+  // Gap 7: Check tool allowlist/blocklist
+  const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
+  if (!permission.permitted) {
+    logger.warn(`Tool "${toolName}" blocked by access list: ${permission.reason}`);
+    return { block: true, blockReason: permission.reason };
+  }
+
+  // Gap 12: Attach budget status
+  const snapshot = await getSnapshot(ctx);
+  attachBudgetStatus(ctx, snapshot);
+
+  // Gap 13: Disable expensive tools when budget is low
+  const estimate = config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
+  if (
+    snapshot.level === "low" &&
+    config.lowBudgetStrategies.includes("disable_expensive_tools")
+  ) {
+    const threshold = config.expensiveToolThreshold ?? config.lowBudgetThreshold / 10;
+    if (estimate > threshold) {
+      logger.warn(
+        `Tool "${toolName}" blocked: cost ${estimate} exceeds expensive threshold ${threshold}`,
+      );
+      return {
+        block: true,
+        blockReason: `Tool "${toolName}" disabled during low budget (cost ${estimate} exceeds threshold ${threshold})`,
+      };
+    }
+  }
+
+  // Gap 13: Limit remaining calls
+  if (
+    snapshot.level === "low" &&
+    config.lowBudgetStrategies.includes("limit_remaining_calls") &&
+    remainingCallsAllowed <= 0
+  ) {
+    logger.warn(`Tool "${toolName}" blocked: remaining call limit reached`);
+    return {
+      block: true,
+      blockReason: `Tool call limit reached during low budget (max ${config.maxRemainingCallsWhenLow} calls)`,
+    };
+  }
 
   const actionKind = config.defaultToolActionKindPrefix + toolName;
+  const ttlMs = config.toolReservationTtls?.[toolName] ?? config.reservationTtlMs;
+  const overagePolicy = config.toolOveragePolicies?.[toolName] ?? config.overagePolicy;
+  const unit = config.toolCurrencies?.[toolName] ?? config.currency;
 
   logger.debug(
     `before_tool_call: tool=${toolName} callId=${event.toolCallId} estimate=${estimate}`,
@@ -177,9 +439,49 @@ export async function beforeToolCall(
     actionKind,
     actionName: toolName,
     estimate,
+    ttlMs,
+    overagePolicy,
+    unit,
   });
 
   if (!isAllowed(result.decision)) {
+    // Gap 17: Retry on deny
+    if (config.retryOnDeny) {
+      for (let attempt = 0; attempt < config.maxRetries; attempt++) {
+        logger.debug(
+          `Tool "${toolName}" denied, retry ${attempt + 1}/${config.maxRetries} after ${config.retryDelayMs}ms`,
+        );
+        await sleep(config.retryDelayMs);
+        invalidateSnapshotCache();
+        const retry = await reserveBudget(client, config, {
+          actionKind,
+          actionName: toolName,
+          estimate,
+          ttlMs,
+          overagePolicy,
+          unit,
+        });
+        if (isAllowed(retry.decision)) {
+          totalReservationsMade++;
+          if (retry.reservationId) {
+            activeReservations.set(event.toolCallId, {
+              reservationId: retry.reservationId,
+              estimate,
+              toolName,
+              createdAt: Date.now(),
+              kind: "tool",
+              currency: unit,
+            });
+          }
+          if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+            remainingCallsAllowed--;
+          }
+          invalidateSnapshotCache();
+          return undefined;
+        }
+      }
+    }
+
     logger.warn(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
@@ -197,10 +499,16 @@ export async function beforeToolCall(
       estimate,
       toolName,
       createdAt: Date.now(),
+      kind: "tool",
+      currency: unit,
     });
   }
 
-  // Invalidate cache since budget state changed after reservation
+  // Gap 13: Decrement remaining calls counter
+  if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+    remainingCallsAllowed--;
+  }
+
   invalidateSnapshotCache();
   return undefined;
 }
@@ -223,19 +531,32 @@ export async function afterToolCall(
 
   activeReservations.delete(event.toolCallId);
 
-  // Use estimate as actual — no way to know real cost in phase 1 without proxy
-  const actual = reservation.estimate;
+  // Gap 2: Use cost estimator if available, otherwise use estimate
+  let actual = reservation.estimate;
+  if (config.costEstimator) {
+    try {
+      const computed = config.costEstimator({
+        toolName: reservation.toolName,
+        estimate: reservation.estimate,
+        durationMs: event.durationMs,
+        result: event.result,
+      });
+      if (computed !== undefined) actual = computed;
+    } catch (err) {
+      logger.warn(`costEstimator threw for tool=${reservation.toolName}, using estimate:`, err);
+    }
+  }
 
-  await commitUsage(
-    client,
-    reservation.reservationId,
-    actual,
-    config.currency,
-    logger,
-  );
+  const unit = reservation.currency ?? config.currency;
+  await commitUsage(client, reservation.reservationId, actual, unit, logger);
   logger.debug(
     `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
   );
+
+  // Gap 6 & 9: Track tool cost
+  trackCost(`tool:${reservation.toolName}`, actual);
+  totalToolCost += actual;
+  totalToolCalls++;
 
   invalidateSnapshotCache();
 }
@@ -262,21 +583,57 @@ export async function agentEnd(
 
   // Fetch final budget state for summary
   invalidateSnapshotCache();
-  const snapshot = await getSnapshot();
+  const snapshot = await getSnapshot(ctx);
 
-  const summary = {
+  // Gap 6: Build cost breakdown as plain object
+  const breakdown: Record<string, { count: number; totalCost: number }> = {};
+  for (const [key, value] of costBreakdown) {
+    breakdown[key] = { count: value.count, totalCost: value.totalCost };
+  }
+
+  // Gap 9: Include forecast data
+  const forecast = buildForecast();
+
+  const summary: SessionSummary = {
+    tenant: config.tenant,
+    budgetId: config.budgetId,
+    userId: resolvedUserId,
+    sessionId: resolvedSessionId,
     remaining: snapshot.remaining,
     spent: snapshot.spent,
     reserved: snapshot.reserved,
     allocated: snapshot.allocated,
     level: snapshot.level,
     totalReservationsMade,
+    costBreakdown: breakdown,
+    startedAt: sessionStartedAt,
+    endedAt: Date.now(),
   };
 
-  logger.info("Agent session budget summary:", summary as unknown as string);
+  logger.info(`Agent session budget summary: remaining=${summary.remaining} spent=${summary.spent} reservations=${summary.totalReservationsMade}`);
 
   // Attach to context metadata if available
   if (ctx.metadata) {
-    ctx.metadata["cycles-budget-guard"] = summary;
+    ctx.metadata["cycles-budget-guard"] = {
+      ...summary,
+      avgToolCost: forecast.avgToolCost,
+      avgModelCost: forecast.avgModelCost,
+      estimatedRemainingToolCalls:
+        forecast.avgToolCost > 0 ? Math.floor(snapshot.remaining / forecast.avgToolCost) : undefined,
+      estimatedRemainingModelCalls:
+        forecast.avgModelCost > 0 ? Math.floor(snapshot.remaining / forecast.avgModelCost) : undefined,
+    };
+  }
+
+  // Gap 15: Cross-session analytics
+  if (config.onSessionEnd) {
+    try {
+      await config.onSessionEnd(summary);
+    } catch (err) {
+      logger.warn("onSessionEnd callback error:", err);
+    }
+  }
+  if (config.analyticsWebhookUrl) {
+    fireWebhook(config.analyticsWebhookUrl, summary);
   }
 }
