@@ -33,7 +33,24 @@ vi.mock("../src/hooks.js", () => ({
   agentEnd: mockAgentEnd,
 }));
 
-import registerPlugin from "../src/index.js";
+import registerPlugin, {
+  BudgetExhaustedError,
+  ToolBudgetDeniedError,
+} from "../src/index.js";
+
+describe("re-exported error types", () => {
+  it("exports BudgetExhaustedError", () => {
+    expect(BudgetExhaustedError).toBeDefined();
+    const err = new BudgetExhaustedError(0);
+    expect(err.code).toBe("BUDGET_EXHAUSTED");
+  });
+
+  it("exports ToolBudgetDeniedError", () => {
+    expect(ToolBudgetDeniedError).toBeDefined();
+    const err = new ToolBudgetDeniedError("test-tool");
+    expect(err.code).toBe("TOOL_BUDGET_DENIED");
+  });
+});
 
 describe("plugin entrypoint", () => {
   beforeEach(() => {

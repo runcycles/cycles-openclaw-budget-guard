@@ -305,6 +305,47 @@ describe("reserveBudget", () => {
     });
   });
 
+  it("includes budgetId as app in subject when set", async () => {
+    const cfgWithBudget = makeConfig({ budgetId: "my-app" });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(cfgWithBudget);
+    await reserveBudget(client, cfgWithBudget, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: { tenant: "test-tenant", app: "my-app" },
+      }),
+    );
+  });
+
+  it("omits app from subject when budgetId is undefined", async () => {
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(config);
+    await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: { tenant: "test-tenant" },
+      }),
+    );
+  });
+
   it("returns synthetic DENY on API error", async () => {
     mockCreateReservation.mockResolvedValue({
       isSuccess: false,

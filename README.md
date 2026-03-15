@@ -167,10 +167,10 @@ Then your config only needs:
 | `cyclesBaseUrl` | string | — | Cycles server URL (required, or set `CYCLES_BASE_URL` env var) |
 | `cyclesApiKey` | string | — | Cycles API key (required, or set `CYCLES_API_KEY` env var) |
 | `tenant` | string | — | Cycles tenant identifier (required) |
-| `budgetId` | string | — | Optional budget scope — maps to app-level scope in Cycles |
+| `budgetId` | string | — | Optional app-level scope — maps to the `app` field in the Cycles subject for both balance queries and reservations |
 | `currency` | string | `USD_MICROCENTS` | Budget unit used for all reservations |
-| `defaultModelActionKind` | string | `llm.completion` | Action kind sent to Cycles for model calls |
-| `defaultToolActionKindPrefix` | string | `tool.` | Prefix prepended to tool names to form the action kind |
+| `defaultModelActionKind` | string | `llm.completion` | Reserved for phase 2 — action kind for model call reservations (not used in phase 1) |
+| `defaultToolActionKindPrefix` | string | `tool.` | Prefix prepended to tool names to form the action kind (e.g. `tool.` + `web_search` → `tool.web_search`) |
 | `lowBudgetThreshold` | number | `10000000` | Remaining budget below this triggers model downgrade |
 | `exhaustedThreshold` | number | `0` | Remaining budget at or below this blocks execution |
 | `modelFallbacks` | object | `{}` | Map: expensive model → cheaper fallback model |
@@ -183,6 +183,10 @@ Then your config only needs:
 > **Note:** `exhaustedThreshold` must be strictly less than `lowBudgetThreshold`. The plugin validates this at startup and throws an error if misconfigured.
 
 ## How It Works
+
+### Hook Priorities
+
+All hooks register at priority 10 except `agent_end` which uses priority 100 so that other plugins finish their cleanup before the budget summary runs.
 
 ### Budget Levels
 
@@ -208,7 +212,7 @@ Budget: 5000000 USD_MICROCENTS remaining. Budget is low — prefer cheaper model
 
 ### Hook: `before_tool_call`
 
-Looks up the tool's estimated cost from `toolBaseCosts` (defaults to 100,000 units if not configured). Creates a Cycles reservation via `POST /v1/reservations`. If the reservation is denied (`DENY` decision), returns `{ block: true, blockReason: "..." }` to block the tool call. Otherwise stores the reservation for settlement in `after_tool_call`.
+Looks up the tool's estimated cost from `toolBaseCosts` (defaults to 100,000 units if not configured). Creates a Cycles reservation via `POST /v1/reservations` with action kind `{defaultToolActionKindPrefix}{toolName}`. If the reservation is denied (`DENY` decision), returns `{ block: true, blockReason: "..." }` to block the tool call. `ALLOW` and `ALLOW_WITH_CAPS` decisions both permit the call. Otherwise stores the reservation for settlement in `after_tool_call`.
 
 ### Hook: `after_tool_call`
 
@@ -220,10 +224,14 @@ Releases any orphaned reservations (defensive cleanup), fetches final budget sta
 
 ### Error Handling
 
-The plugin defines two structured error types:
+The plugin exports two structured error types that can be imported for error handling:
 
-- **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown by `before_model_resolve` when budget is exhausted and `failClosed` is true.
-- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type. The `before_tool_call` hook returns `{ block: true, blockReason }` to OpenClaw when a reservation is denied.
+```typescript
+import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw-budget-guard";
+```
+
+- **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`, `remaining: number`) — thrown by `before_model_resolve` when budget is exhausted and `failClosed` is true.
+- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`, `toolName: string`) — available as a structured error type. The `before_tool_call` hook returns `{ block: true, blockReason }` to OpenClaw when a reservation is denied.
 
 ### Fail-Open Behavior
 

@@ -11,7 +11,7 @@
 
 | Category | Pass | Issues |
 |----------|------|--------|
-| OpenClaw Plugin Contract | 3/3 | 0 |
+| OpenClaw Plugin Contract | 4/4 | 0 |
 | Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 16/16 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
@@ -54,7 +54,8 @@ Compared the following across plugin manifest, package metadata, and TypeScript 
 |---|---|---|
 | `openclaw.extensions` in package.json | `package.json:32` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
 | `openclaw.plugin.json` manifest with `id`, `extensions`, `configSchema` | `openclaw.plugin.json` — id: `cycles-openclaw-budget-guard`, extensions: `["./dist/index.js"]` | PASS |
-| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:21` — `export default function (api) { ... }` | PASS |
+| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:23` — `export default function (api) { ... }` | PASS |
+| Named exports: error types and config types | `src/index.ts:21-22` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot` | PASS |
 
 Both `package.json` `openclaw.extensions` and `openclaw.plugin.json` `extensions` point to the same entrypoint (`./dist/index.js`). The default export receives `api` with `.config`, `.logger`, and `.on()` — matching the OpenClaw plugin registration API.
 
@@ -128,6 +129,7 @@ All request bodies use snake_case wire-format keys (`idempotency_key`, `ttl_ms`,
 - `ttl_ms: 60_000` (60s) — reasonable timeout for tool execution
 - `overage_policy: "REJECT"` — denies reservation when budget is exceeded
 - `idempotency_key: randomUUID()` — unique per request via `node:crypto`
+- `subject: { tenant, app? }` — `budgetId` config is threaded as `app` field when set, matching the balance query scope
 
 **Response handling:**
 - `balanceResponseFromWire()` and `reservationCreateResponseFromWire()` from `runcycles` used for all response parsing
