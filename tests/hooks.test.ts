@@ -138,7 +138,7 @@ describe("beforeModelResolve — snapshot caching", () => {
     expect(mockFetchBudgetState).toHaveBeenCalledOnce();
   });
 
-  it("returns cached snapshot within TTL", async () => {
+  it("re-fetches snapshot after model reservation invalidates cache", async () => {
     setup();
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
@@ -149,13 +149,12 @@ describe("beforeModelResolve — snapshot caching", () => {
     vi.advanceTimersByTime(3000);
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
-    // Once for first call — model reservation invalidates cache but getSnapshot
-    // at the start of the second call uses the invalidated-then-refetched snapshot
-    // The key point: within TTL, no extra fetch
+    // Each beforeModelResolve call triggers a fetch because model reservation
+    // invalidates the cache after commit
     expect(mockFetchBudgetState).toHaveBeenCalledTimes(2);
   });
 
-  it("uses configurable cache TTL", async () => {
+  it("re-fetches with configurable cache TTL after invalidation", async () => {
     setup({ snapshotCacheTtlMs: 1_000 });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
