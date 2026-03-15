@@ -54,7 +54,14 @@ export async function fetchBudgetState(
   // app, workflow, agent, toolset). User/session scoping is applied at the
   // reservation level, not the balance query level.
 
-  const response = await client.getBalances(params);
+  let response;
+  try {
+    response = await client.getBalances(params);
+  } catch (err) {
+    logger.warn(`Failed to fetch balances (network error): ${err}`);
+    // Fail-open: assume healthy so we don't block on transient errors
+    return { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+  }
 
   if (!response.isSuccess) {
     logger.warn(
@@ -174,7 +181,17 @@ export async function reserveBudget(
     overage_policy: opts.overagePolicy ?? config.overagePolicy,
   };
 
-  const response = await client.createReservation(body);
+  let response;
+  try {
+    response = await client.createReservation(body);
+  } catch {
+    // Network-level error — treat as DENY so callers can handle uniformly
+    return {
+      decision: "DENY" as ReservationCreateResponse["decision"],
+      affectedScopes: [],
+      reasonCode: "reservation_network_error",
+    };
+  }
 
   if (!response.isSuccess) {
     // Build a synthetic DENY response so callers can handle uniformly

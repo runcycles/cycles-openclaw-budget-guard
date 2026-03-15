@@ -114,7 +114,7 @@ describe("initHooks", () => {
     const { DryRunClient } = await import("../src/dry-run.js");
     const logger = makeLogger();
     initHooks(makeConfig({ dryRun: true, dryRunBudget: 50_000_000 }), logger);
-    expect(DryRunClient).toHaveBeenCalledWith(50_000_000);
+    expect(DryRunClient).toHaveBeenCalledWith(50_000_000, "USD_MICROCENTS");
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("[DRY-RUN]"),
     );

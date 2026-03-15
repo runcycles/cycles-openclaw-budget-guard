@@ -97,7 +97,7 @@ export function initHooks(
 
   // Gap 10: Dry-run mode
   if (config.dryRun) {
-    client = new DryRunClient(config.dryRunBudget) as unknown as CyclesClient;
+    client = new DryRunClient(config.dryRunBudget, config.currency) as unknown as CyclesClient;
     logger.info(
       `[DRY-RUN] Plugin initialized with simulated budget=${config.dryRunBudget} tenant=${config.tenant}`,
     );
@@ -303,9 +303,12 @@ export async function beforeModelResolve(
     );
   } else {
     totalReservationsMade++;
-    if (result.reservationId) {
-      const key = `model:${++modelReservationCounter}`;
-      activeReservations.set(key, {
+    const reservationKey = result.reservationId
+      ? `model:${++modelReservationCounter}`
+      : undefined;
+
+    if (result.reservationId && reservationKey) {
+      activeReservations.set(reservationKey, {
         reservationId: result.reservationId,
         estimate: modelCost,
         toolName: resolvedModel,
@@ -313,15 +316,12 @@ export async function beforeModelResolve(
         kind: "model",
         currency: modelCurrency,
       });
-    }
 
-    // Commit immediately (no after_model_resolve hook available)
-    if (result.reservationId) {
+      // Commit immediately (no after_model_resolve hook available)
       try {
         await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
       } finally {
-        const key = `model:${modelReservationCounter}`;
-        activeReservations.delete(key);
+        activeReservations.delete(reservationKey);
       }
     }
 

@@ -219,4 +219,4 @@ Applied across `beforeModelResolve`, `beforePromptBuild`, and `beforeToolCall`.
 
 ## Test Coverage
 
-All 18 gaps are covered by 183 tests with 100% line coverage. See `AUDIT.md` for detailed coverage breakdown and code review findings.
+All 18 gaps are covered by 185 tests with 100% line coverage. See `AUDIT.md` for detailed coverage breakdown and code review findings.

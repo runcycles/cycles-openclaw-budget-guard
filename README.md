@@ -242,7 +242,7 @@ Available strategies:
 |-------|------|---------|-------------|
 | `costEstimator` | function | — | Custom callback `(context) => number \| undefined` for dynamic tool cost estimation |
 
-The `costEstimator` receives a context object with `toolName`, `durationMs`, `estimate`, and `event` and should return the actual cost or `undefined` to use the estimate.
+The `costEstimator` receives a context object with `toolName`, `durationMs`, `estimate`, and `result` and should return the actual cost or `undefined` to use the estimate.
 
 ### Budget Transitions
 

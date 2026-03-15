@@ -25,9 +25,9 @@
 | Prompt Hint Formatting | — | 0 |
 | Session Summary & Metadata | — | 0 |
 | Published Package Contents (`files` field) | — | 0 |
-| Code Review (logic, safety, types) | 10 found | 5 fixed, 5 accepted |
+| Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested.
+**Overall: Plugin is contract-conformant and production-ready.** All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected.
 
 ---
 
@@ -47,7 +47,7 @@ All files    |   99.52 |    95.01 |   98.33 |    100
   types.ts   |     100 |      100 |     100 |    100
 ```
 
-183 tests across 8 test files. **100% line coverage, 95% branch coverage.**
+185 tests across 8 test files. **100% line coverage, 95% branch coverage.**
 
 Remaining uncovered branches are implicit from nullish coalescing (`??`), optional chaining (`?.`), and ternary operators where only one path is reachable in tested scenarios.
 
@@ -59,10 +59,10 @@ Remaining uncovered branches are implicit from nullish coalescing (`??`), option
 
 | Requirement | Location | Status |
 |---|---|---|
-| `openclaw.extensions` in package.json | `package.json:32` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
+| `openclaw.extensions` in package.json | `package.json:28-29` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
 | `openclaw.plugin.json` manifest with `id`, `extensions`, `configSchema` | `openclaw.plugin.json` — id: `cycles-openclaw-budget-guard`, extensions: `["./dist/index.js"]` | PASS |
-| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:23` | PASS |
-| Named exports: error types and config types | `src/index.ts:21-22` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot`, `BudgetTransitionEvent`, `BudgetStatusMetadata`, `CostEstimatorContext`, `SessionSummary` | PASS |
+| Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:32` | PASS |
+| Named exports: error types and config types | `src/index.ts:21-30` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot`, `BudgetTransitionEvent`, `BudgetStatusMetadata`, `CostEstimatorContext`, `SessionSummary` | PASS |
 
 ### Hook Registrations (all 5 match)
 
@@ -266,6 +266,42 @@ Logger calls used `{ ... } as unknown as string` to pass structured data. This v
 
 **Fix:** Replaced with template literal strings that embed relevant values directly.
 
+#### 4. Network exceptions bypass fail-open logic in fetchBudgetState
+
+**File:** `src/cycles.ts:57`
+**Severity:** High — Error handling
+
+`client.getBalances()` was called without try-catch. HTTP error responses were handled (fail-open), but raw network exceptions (DNS failure, timeout) would propagate up and crash hook handlers regardless of `failClosed` setting.
+
+**Fix:** Wrapped `client.getBalances()` in try-catch; on network error, logs a warning and returns fail-open healthy snapshot. Test added.
+
+#### 5. Network exceptions bypass synthetic DENY in reserveBudget
+
+**File:** `src/cycles.ts:177`
+**Severity:** High — Error handling
+
+`client.createReservation()` was called without try-catch. A network-level exception would propagate instead of returning a synthetic DENY response.
+
+**Fix:** Wrapped `client.createReservation()` in try-catch; on error, returns synthetic DENY with `reasonCode: "reservation_network_error"`. Test added.
+
+#### 6. Model reservation key vulnerable to async interleaving
+
+**File:** `src/hooks.ts:306-326`
+**Severity:** Medium — Concurrency safety
+
+The model reservation key was constructed with `++modelReservationCounter`, stored, and then re-constructed in a `finally` block using the same counter. Between the `await commitUsage()` and the `finally`, another concurrent `beforeModelResolve` call could increment the counter, causing the wrong key to be deleted.
+
+**Fix:** Captured the key as a `const` before the async operation and reused the same variable in `finally`.
+
+#### 7. DryRunClient hardcoded currency ignores configured currency
+
+**File:** `src/dry-run.ts:31-34`
+**Severity:** Low — Config mismatch
+
+DryRunClient hardcoded `"USD_MICROCENTS"` for all balance units. When users configured a different currency (e.g., `"TOKENS"`), `findMatchingBalance` would fall back to the first balance regardless of currency match.
+
+**Fix:** Added `currency` constructor parameter. `initHooks` passes `config.currency`. Test updated.
+
 ### Issues Accepted (No Fix Needed)
 
 #### 4. Stale snapshot.level in retry success path
@@ -401,4 +437,4 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (183 tests, 100% line coverage), and reviewed for correctness. Five code issues were identified and fixed; five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (185 tests, 100% line coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.

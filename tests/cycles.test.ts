@@ -123,6 +123,19 @@ describe("fetchBudgetState", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
+  it("returns fail-open snapshot on network exception", async () => {
+    mockGetBalances.mockRejectedValue(new Error("DNS resolution failed"));
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("network error"),
+    );
+  });
+
   it("returns fail-open snapshot when no matching balance", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
@@ -516,6 +529,20 @@ describe("reserveBudget", () => {
     });
 
     expect(result.reasonCode).toBe("reservation_failed");
+  });
+
+  it("returns synthetic DENY on network exception", async () => {
+    mockCreateReservation.mockRejectedValue(new Error("connection refused"));
+
+    const client = createCyclesClient(config);
+    const result = await reserveBudget(client, config, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    expect(result.reasonCode).toBe("reservation_network_error");
   });
 });
 

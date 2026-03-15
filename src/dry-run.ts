@@ -13,10 +13,12 @@ export class DryRunClient {
   private reserved = 0;
   private allocated: number;
   private reservations = new Map<string, number>();
+  private currency: string;
 
-  constructor(initialBudget: number) {
+  constructor(initialBudget: number, currency = "USD_MICROCENTS") {
     this.remaining = initialBudget;
     this.allocated = initialBudget;
+    this.currency = currency;
   }
 
   async getBalances(params: Record<string, string>) {
@@ -28,10 +30,10 @@ export class DryRunClient {
           {
             scope: `tenant:${params.tenant}`,
             scopePath: `/${params.tenant}`,
-            remaining: { unit: "USD_MICROCENTS", amount: this.remaining },
-            reserved: { unit: "USD_MICROCENTS", amount: this.reserved },
-            spent: { unit: "USD_MICROCENTS", amount: this.spent },
-            allocated: { unit: "USD_MICROCENTS", amount: this.allocated },
+            remaining: { unit: this.currency, amount: this.remaining },
+            reserved: { unit: this.currency, amount: this.reserved },
+            spent: { unit: this.currency, amount: this.spent },
+            allocated: { unit: this.currency, amount: this.allocated },
           },
         ],
       },
