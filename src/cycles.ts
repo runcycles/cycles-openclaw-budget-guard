@@ -49,10 +49,10 @@ export async function fetchBudgetState(
   if (config.budgetId) {
     params.app = config.budgetId;
   }
-  const userId = opts?.userId ?? config.userId;
-  const sessionId = opts?.sessionId ?? config.sessionId;
-  if (userId) params.user = userId;
-  if (sessionId) params.session = sessionId;
+  // Note: userId/sessionId are used in reservation subjects via dimensions,
+  // but getBalances only supports standard subject filters (tenant, workspace,
+  // app, workflow, agent, toolset). User/session scoping is applied at the
+  // reservation level, not the balance query level.
 
   const response = await client.getBalances(params);
 
@@ -156,13 +156,17 @@ export async function reserveBudget(
   const userId = opts.userId ?? config.userId;
   const sessionId = opts.sessionId ?? config.sessionId;
 
+  // Build dimensions for user/session scoping (Gap 3)
+  const dimensions: Record<string, string> = {};
+  if (userId) dimensions.user = userId;
+  if (sessionId) dimensions.session = sessionId;
+
   const body: Record<string, unknown> = {
     idempotency_key: randomUUID(),
     subject: {
       tenant: config.tenant,
       ...(config.budgetId ? { app: config.budgetId } : {}),
-      ...(userId ? { user: userId } : {}),
-      ...(sessionId ? { session: sessionId } : {}),
+      ...(Object.keys(dimensions).length > 0 ? { dimensions } : {}),
     },
     action: { kind: opts.actionKind, name: opts.actionName },
     estimate: { unit: opts.unit ?? config.currency, amount: opts.estimate },

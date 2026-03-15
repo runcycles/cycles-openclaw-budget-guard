@@ -180,7 +180,7 @@ describe("fetchBudgetState", () => {
     expect(mockGetBalances).toHaveBeenCalledWith({ tenant: "test-tenant" });
   });
 
-  it("passes userId and sessionId when provided (Gap 3)", async () => {
+  it("does not pass userId/sessionId as balance query params (Gap 3)", async () => {
     const cfgWithUser = makeConfig({ userId: "user-1", sessionId: "sess-1" });
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
@@ -198,34 +198,10 @@ describe("fetchBudgetState", () => {
     const client = createCyclesClient(cfgWithUser);
     await fetchBudgetState(client, cfgWithUser, logger);
 
+    // userId/sessionId are only used in reservation subjects via dimensions,
+    // not in balance query params (getBalances only supports standard subject filters)
     expect(mockGetBalances).toHaveBeenCalledWith({
       tenant: "test-tenant",
-      user: "user-1",
-      session: "sess-1",
-    });
-  });
-
-  it("opts override config for userId/sessionId (Gap 3)", async () => {
-    const cfgWithUser = makeConfig({ userId: "config-user" });
-    mockGetBalances.mockResolvedValue({
-      isSuccess: true,
-      body: {
-        balances: [
-          {
-            scope: "tenant:test",
-            scopePath: "/test",
-            remaining: { unit: "USD_MICROCENTS", amount: 10 },
-          },
-        ],
-      },
-    });
-
-    const client = createCyclesClient(cfgWithUser);
-    await fetchBudgetState(client, cfgWithUser, logger, { userId: "opts-user" });
-
-    expect(mockGetBalances).toHaveBeenCalledWith({
-      tenant: "test-tenant",
-      user: "opts-user",
     });
   });
 
@@ -405,7 +381,7 @@ describe("reserveBudget", () => {
     );
   });
 
-  it("includes userId and sessionId in subject (Gap 3)", async () => {
+  it("includes userId and sessionId in subject dimensions (Gap 3)", async () => {
     const cfgWithUser = makeConfig({ userId: "u1", sessionId: "s1" });
     mockCreateReservation.mockResolvedValue({
       isSuccess: true,
@@ -421,7 +397,10 @@ describe("reserveBudget", () => {
 
     expect(mockCreateReservation).toHaveBeenCalledWith(
       expect.objectContaining({
-        subject: { tenant: "test-tenant", user: "u1", session: "s1" },
+        subject: {
+          tenant: "test-tenant",
+          dimensions: { user: "u1", session: "s1" },
+        },
       }),
     );
   });
@@ -456,11 +435,11 @@ describe("reserveBudget", () => {
       actionKind: "tool.x",
       actionName: "x",
       estimate: 100,
-      overagePolicy: "ALLOW",
+      overagePolicy: "ALLOW_IF_AVAILABLE",
     });
 
     expect(mockCreateReservation).toHaveBeenCalledWith(
-      expect.objectContaining({ overage_policy: "ALLOW" }),
+      expect.objectContaining({ overage_policy: "ALLOW_IF_AVAILABLE" }),
     );
   });
 

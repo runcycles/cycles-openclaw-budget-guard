@@ -203,7 +203,7 @@ To test without a live Cycles server:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `reservationTtlMs` | number | `60000` | Default TTL for tool reservations (ms) |
-| `overagePolicy` | string | `REJECT` | Default overage policy (`REJECT`, `ALLOW`, `ALLOW_WITH_CAPS`) |
+| `overagePolicy` | string | `REJECT` | Default overage policy (`REJECT`, `ALLOW_IF_AVAILABLE`, `ALLOW_WITH_OVERDRAFT`) |
 | `snapshotCacheTtlMs` | number | `5000` | How long to cache budget snapshots (ms) |
 
 ### Low Budget Strategies

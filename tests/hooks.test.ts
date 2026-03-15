@@ -670,7 +670,7 @@ describe("beforeToolCall", () => {
   });
 
   it("passes custom overage policy (Gap 16)", async () => {
-    setup({ overagePolicy: "ALLOW" });
+    setup({ overagePolicy: "ALLOW_IF_AVAILABLE" });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
     mockIsAllowed.mockReturnValue(true);
     mockReserveBudget.mockResolvedValue({
@@ -687,12 +687,12 @@ describe("beforeToolCall", () => {
     expect(mockReserveBudget).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ overagePolicy: "ALLOW" }),
+      expect.objectContaining({ overagePolicy: "ALLOW_IF_AVAILABLE" }),
     );
   });
 
   it("uses per-tool overage policy (Gap 16)", async () => {
-    setup({ toolOveragePolicies: { risky_tool: "ALLOW_WITH_CAPS" } });
+    setup({ toolOveragePolicies: { risky_tool: "ALLOW_WITH_OVERDRAFT" } });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
     mockIsAllowed.mockReturnValue(true);
     mockReserveBudget.mockResolvedValue({
@@ -709,7 +709,7 @@ describe("beforeToolCall", () => {
     expect(mockReserveBudget).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ overagePolicy: "ALLOW_WITH_CAPS" }),
+      expect.objectContaining({ overagePolicy: "ALLOW_WITH_OVERDRAFT" }),
     );
   });
 

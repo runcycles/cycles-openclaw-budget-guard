@@ -238,11 +238,11 @@ describe("resolveConfig", () => {
   it("parses overagePolicy and toolOveragePolicies (Gap 16)", () => {
     const cfg = resolveConfig({
       ...minValid,
-      overagePolicy: "ALLOW",
-      toolOveragePolicies: { risky: "ALLOW_WITH_CAPS" },
+      overagePolicy: "ALLOW_IF_AVAILABLE",
+      toolOveragePolicies: { risky: "ALLOW_WITH_OVERDRAFT" },
     });
-    expect(cfg.overagePolicy).toBe("ALLOW");
-    expect(cfg.toolOveragePolicies).toEqual({ risky: "ALLOW_WITH_CAPS" });
+    expect(cfg.overagePolicy).toBe("ALLOW_IF_AVAILABLE");
+    expect(cfg.toolOveragePolicies).toEqual({ risky: "ALLOW_WITH_OVERDRAFT" });
   });
 
   it("parses toolAllowlist and toolBlocklist (Gap 7)", () => {

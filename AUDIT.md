@@ -47,7 +47,7 @@ All files    |   99.52 |    95.01 |   98.33 |    100
   types.ts   |     100 |      100 |     100 |    100
 ```
 
-184 tests across 8 test files. **100% line coverage, 95% branch coverage.**
+183 tests across 8 test files. **100% line coverage, 95% branch coverage.**
 
 Remaining uncovered branches are implicit from nullish coalescing (`??`), optional chaining (`?.`), and ternary operators where only one path is reachable in tested scenarios.
 
@@ -326,7 +326,71 @@ Model reservations are committed with estimated cost because OpenClaw has no `af
 
 ---
 
-## Part 6: Recommendations
+## Part 6: Runcycles Client Spec Consistency Review
+
+Verified all plugin API usage against the installed `runcycles` ^0.1.1 TypeScript client (`node_modules/runcycles/dist/index.d.ts`). Three spec inconsistencies were found and corrected:
+
+### Issue 1: Subject field misuse — user/session as top-level fields (FIXED)
+
+**File:** `src/cycles.ts` (reserveBudget)
+**Severity:** High — Would cause validation failures
+
+The `Subject` interface only supports: `tenant`, `workspace`, `app`, `workflow`, `agent`, `toolset`, `dimensions`. User and session identifiers were incorrectly passed as top-level subject fields.
+
+**Fix:** Moved `userId` and `sessionId` into `subject.dimensions`:
+```typescript
+const dimensions: Record<string, string> = {};
+if (userId) dimensions.user = userId;
+if (sessionId) dimensions.session = sessionId;
+// ...
+subject: {
+  tenant: config.tenant,
+  ...(config.budgetId ? { app: config.budgetId } : {}),
+  ...(Object.keys(dimensions).length > 0 ? { dimensions } : {}),
+},
+```
+
+### Issue 2: Invalid balance query parameters (FIXED)
+
+**File:** `src/cycles.ts` (fetchBudgetState)
+**Severity:** Medium — Parameters would be silently ignored
+
+`getBalances()` only accepts `BALANCE_FILTER_PARAMS`: `tenant`, `workspace`, `app`, `workflow`, `agent`, `toolset`. Passing `user` or `session` as query params had no effect.
+
+**Fix:** Removed `user`/`session` from balance query params. User/session scoping is applied at reservation time only, via `dimensions`.
+
+### Issue 3: Overage policy enum confusion (FIXED)
+
+**Files:** `openclaw.plugin.json`, `README.md`, test files
+**Severity:** Medium — Documentation/test correctness
+
+Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` enum values). The correct `CommitOveragePolicy` enum values are:
+- `REJECT` (default)
+- `ALLOW_IF_AVAILABLE`
+- `ALLOW_WITH_OVERDRAFT`
+
+**Fix:** Updated all references across plugin.json, README.md, and test files.
+
+### Verification Summary
+
+| API Surface | Status |
+|---|---|
+| `CyclesConfig` constructor (baseUrl, apiKey, tenant) | CORRECT |
+| `CyclesClient.getBalances(params)` — filter params | CORRECT (after fix) |
+| `CyclesClient.createReservation(body)` — wire format | CORRECT (after fix) |
+| `CyclesClient.commitReservation(id, body)` — wire format | CORRECT |
+| `CyclesClient.releaseReservation(id, body)` — wire format | CORRECT |
+| `Subject` interface — standard fields + dimensions | CORRECT (after fix) |
+| `Balance` interface — field access | CORRECT |
+| `ReservationCreateResponse` — decision/reservationId | CORRECT |
+| `CommitOveragePolicy` enum — REJECT/ALLOW_IF_AVAILABLE/ALLOW_WITH_OVERDRAFT | CORRECT (after fix) |
+| `Decision` enum — ALLOW/ALLOW_WITH_CAPS/DENY | CORRECT |
+| `isAllowed()` helper usage | CORRECT |
+| Wire format mappers (balanceResponseFromWire, reservationCreateResponseFromWire) | CORRECT |
+
+---
+
+## Part 7: Recommendations
 
 1. **Runtime validation for Cycles API responses** — Consider zod or lightweight validator for `fetchBudgetState` to catch API contract changes early.
 2. **Model cost callback** — If OpenClaw adds `after_model_resolve`, add `modelCostEstimator` similar to `costEstimator`.
@@ -337,4 +401,4 @@ Model reservations are committed with estimated cost because OpenClaw has no `af
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (184 tests, 100% line coverage), and reviewed for correctness. Five code issues were identified and fixed; five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (183 tests, 100% line coverage), and reviewed for correctness. Five code issues were identified and fixed; five were reviewed and accepted as reasonable design choices.
