@@ -17,13 +17,11 @@ import type {
   PromptBuildContext,
   ToolCallContext,
   ToolResultContext,
-  BudgetExhaustedError,
-  ToolBudgetDeniedError,
 } from "./types.js";
 
 import {
-  BudgetExhaustedError as BudgetExhaustedErrorClass,
-  ToolBudgetDeniedError as ToolBudgetDeniedErrorClass,
+  BudgetExhaustedError,
+  ToolBudgetDeniedError,
 } from "./types.js";
 
 import {
@@ -123,7 +121,7 @@ export async function beforeModelResolve(
     logger.warn(
       `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${ctx.model}`,
     );
-    throw new BudgetExhaustedErrorClass(snapshot.remaining);
+    throw new BudgetExhaustedError(snapshot.remaining);
   }
 
   logger.warn(
@@ -177,7 +175,7 @@ export async function beforeToolCall(ctx: ToolCallContext): Promise<void> {
     logger.warn(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
-    throw new ToolBudgetDeniedErrorClass(
+    throw new ToolBudgetDeniedError(
       toolName,
       result.reasonCode ?? "budget reservation denied",
     );
@@ -216,26 +214,16 @@ export async function afterToolCall(ctx: ToolResultContext): Promise<void> {
   // Use estimate as actual — no way to know real cost in phase 1 without proxy
   const actual = reservation.estimate;
 
-  try {
-    await commitUsage(
-      client,
-      reservation.reservationId,
-      actual,
-      config.currency,
-      logger,
-    );
-    logger.debug(
-      `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
-    );
-  } catch {
-    // Commit already logs internally — attempt release as fallback
-    await releaseReservation(
-      client,
-      reservation.reservationId,
-      "commit_failed_fallback",
-      logger,
-    );
-  }
+  await commitUsage(
+    client,
+    reservation.reservationId,
+    actual,
+    config.currency,
+    logger,
+  );
+  logger.debug(
+    `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
+  );
 
   invalidateSnapshotCache();
 }

@@ -27,6 +27,15 @@ export function resolveConfig(
     throw new Error("[cycles-budget-guard] tenant is required in config");
   }
 
+  const lowBudgetThreshold = asNumber(raw.lowBudgetThreshold) ?? 10_000_000;
+  const exhaustedThreshold = asNumber(raw.exhaustedThreshold) ?? 0;
+
+  if (exhaustedThreshold >= lowBudgetThreshold) {
+    throw new Error(
+      `[cycles-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be less than lowBudgetThreshold (${lowBudgetThreshold})`,
+    );
+  }
+
   return {
     enabled: asBool(raw.enabled) ?? true,
     cyclesBaseUrl,
@@ -38,8 +47,8 @@ export function resolveConfig(
       asString(raw.defaultModelActionKind) ?? "llm.completion",
     defaultToolActionKindPrefix:
       asString(raw.defaultToolActionKindPrefix) ?? "tool.",
-    lowBudgetThreshold: asNumber(raw.lowBudgetThreshold) ?? 10_000_000,
-    exhaustedThreshold: asNumber(raw.exhaustedThreshold) ?? 0,
+    lowBudgetThreshold,
+    exhaustedThreshold,
     modelFallbacks: asStringRecord(raw.modelFallbacks) ?? {},
     toolBaseCosts: asNumberRecord(raw.toolBaseCosts) ?? {},
     injectPromptBudgetHint: asBool(raw.injectPromptBudgetHint) ?? true,

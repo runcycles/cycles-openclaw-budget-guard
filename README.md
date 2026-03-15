@@ -20,6 +20,43 @@ The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typ
 - **No streaming cost tracking** — tool costs are estimated upfront via the `toolBaseCosts` config map.
 - **No multi-currency support** — a single `currency` unit is used for all reservations.
 
+## Project Structure
+
+```
+cycles-openclaw-budget-guard/
+├── openclaw.plugin.json         # Plugin manifest with inline configSchema
+├── package.json                 # npm package with openclaw.extensions
+├── tsconfig.json
+├── tsup.config.ts
+└── src/
+    ├── index.ts                 # Plugin entrypoint — exports register()
+    ├── types.ts                 # Config interface, hook payload types, error classes
+    ├── config.ts                # Config validation with defaults and env-var fallbacks
+    ├── logger.ts                # Simple leveled logger ([cycles-budget-guard] prefix)
+    ├── cycles.ts                # Thin wrappers around runcycles CyclesClient
+    ├── budget.ts                # Budget classification (healthy/low/exhausted) and hint formatting
+    └── hooks.ts                 # All 5 hook implementations with reservation tracking
+```
+
+### Architecture
+
+```
+OpenClaw Runtime
+  │
+  ├─ before_model_resolve ──→ hooks.ts ──→ cycles.ts (getBalances) ──→ Cycles Server
+  │                                     └→ budget.ts (classify)
+  │
+  ├─ before_prompt_build  ──→ hooks.ts ──→ budget.ts (formatHint)
+  │
+  ├─ before_tool_call     ──→ hooks.ts ──→ cycles.ts (createReservation) ──→ Cycles Server
+  │
+  ├─ after_tool_call      ──→ hooks.ts ──→ cycles.ts (commitReservation) ──→ Cycles Server
+  │
+  └─ agent_end            ──→ hooks.ts ──→ cycles.ts (releaseReservation) ──→ Cycles Server
+```
+
+The plugin maintains an in-memory `Map<callId, ActiveReservation>` to track in-flight tool reservations between `before_tool_call` and `after_tool_call`. Budget state is cached for 5 seconds and invalidated after mutations.
+
 ## Installation
 
 ```bash
@@ -81,42 +118,72 @@ Connection details can also be provided via environment variables:
 | `currency` | string | `USD_MICROCENTS` | Budget unit |
 | `defaultModelActionKind` | string | `llm.completion` | Action kind for model calls |
 | `defaultToolActionKindPrefix` | string | `tool.` | Prefix for tool action kinds |
-| `lowBudgetThreshold` | number | `10000000` | Remaining below this = "low" |
-| `exhaustedThreshold` | number | `0` | Remaining at or below this = "exhausted" |
-| `modelFallbacks` | object | `{}` | Map: expensive model → cheaper model |
-| `toolBaseCosts` | object | `{}` | Map: tool name → estimated cost |
-| `injectPromptBudgetHint` | boolean | `true` | Inject budget status into prompt |
-| `maxPromptHintChars` | number | `200` | Max chars for budget hint |
-| `failClosed` | boolean | `true` | Block on exhausted budget |
+| `lowBudgetThreshold` | number | `10000000` | Remaining below this triggers model downgrade |
+| `exhaustedThreshold` | number | `0` | Remaining at or below this blocks execution |
+| `modelFallbacks` | object | `{}` | Map: expensive model → cheaper fallback model |
+| `toolBaseCosts` | object | `{}` | Map: tool name → estimated cost in currency units |
+| `injectPromptBudgetHint` | boolean | `true` | Inject budget status into system prompt |
+| `maxPromptHintChars` | number | `200` | Max characters for budget hint |
+| `failClosed` | boolean | `true` | Block on exhausted budget (false = warn and continue) |
 | `logLevel` | string | `info` | `debug` / `info` / `warn` / `error` |
+
+> **Note:** `exhaustedThreshold` must be strictly less than `lowBudgetThreshold`. The plugin validates this at startup.
 
 ## Behavior
 
+### Budget Levels
+
+The plugin classifies budget into three levels based on the remaining balance from the Cycles server:
+
+| Level | Condition | Behavior |
+|-------|-----------|----------|
+| **healthy** | `remaining > lowBudgetThreshold` | Pass through — no intervention |
+| **low** | `exhaustedThreshold < remaining <= lowBudgetThreshold` | Downgrade models via `modelFallbacks`, inject budget warning into prompts |
+| **exhausted** | `remaining <= exhaustedThreshold` | Block execution (`failClosed=true`) or warn and continue (`failClosed=false`) |
+
 ### Hook: `before_model_resolve`
 
-Fetches budget state from Cycles. If budget is healthy, passes through. If low, downgrades the model using `modelFallbacks`. If exhausted and `failClosed` is true, throws a structured `BudgetExhaustedError`.
+Fetches budget state from the Cycles `/v1/balances` endpoint. If budget is healthy, passes through. If low, checks `modelFallbacks` for a cheaper alternative and returns it. If exhausted and `failClosed` is true, throws `BudgetExhaustedError`.
 
 ### Hook: `before_prompt_build`
 
-Injects a compact budget hint into the system prompt (e.g., "Budget: 5000000 USD_MICROCENTS remaining. Budget is low — prefer cheaper models and avoid expensive tools.").
+When `injectPromptBudgetHint` is enabled, injects a compact deterministic hint into the system prompt. Example output:
+
+```
+Budget: 5000000 USD_MICROCENTS remaining. Budget is low — prefer cheaper models and avoid expensive tools. 50% of budget remaining.
+```
 
 ### Hook: `before_tool_call`
 
-Estimates the tool cost from `toolBaseCosts` (or a default), then creates a Cycles reservation. If the reservation is denied (budget exceeded), the tool call is blocked with a `ToolBudgetDeniedError`.
+Looks up the tool's estimated cost from `toolBaseCosts` (falls back to a default of 100,000 units). Creates a Cycles reservation via `POST /v1/reservations`. If the reservation is denied (`DENY` decision), throws `ToolBudgetDeniedError` to block the tool call. Stores the reservation in an in-memory map for settlement in `after_tool_call`.
 
 ### Hook: `after_tool_call`
 
-Commits the reserved amount as actual usage. If commit fails, releases the reservation as a fallback. Never throws.
+Commits the reserved amount as actual usage via `POST /v1/reservations/{id}/commit`. In phase 1, actual cost equals the estimate since there is no proxy to measure real token usage. Commit is best-effort — failures are logged but never thrown.
 
 ### Hook: `agent_end`
 
-Releases any orphaned reservations, fetches final budget state, and logs a session summary.
+Releases any orphaned reservations (defensive cleanup), fetches final budget state, and logs a session summary including total spent, remaining balance, and number of reservations made. Attaches the summary to the context metadata.
+
+### Error Types
+
+The plugin throws two structured error types:
+
+- **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown by `before_model_resolve` when budget is exhausted and `failClosed` is true.
+- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — thrown by `before_tool_call` when a reservation is denied by the Cycles server.
+
+### Fail-Open Behavior
+
+- If the Cycles server is unreachable during a balance check, the plugin assumes healthy budget (fail-open) to avoid blocking agents on transient infrastructure issues.
+- If a commit fails in `after_tool_call`, the failure is logged but execution continues.
+- The `failClosed` config only controls behavior when budget is **confirmed exhausted** — not when the budget service is down.
 
 ## Important Notes
 
 - Most plugin config changes require **restarting the OpenClaw gateway**.
 - Budget state is cached for 5 seconds to reduce API calls. The cache is invalidated after reservations and commits.
-- Tool costs are estimates — without a proxy layer, exact token-level costs are not available.
+- Tool costs are estimates — without a proxy layer, exact token-level costs are not available in phase 1.
+- This phase does not provide hard per-token LLM enforcement because there is no proxy/provider layer yet.
 
 ## Local Development
 
@@ -130,6 +197,8 @@ npm run build
 # Type-check without emitting
 npm run typecheck
 ```
+
+Output is written to `dist/index.js` (ESM) with TypeScript declarations.
 
 ## License
 

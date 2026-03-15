@@ -10,7 +10,6 @@ import {
   CyclesConfig,
   balanceResponseFromWire,
   reservationCreateResponseFromWire,
-  isAllowed,
   type Balance,
   type ReservationCreateResponse,
 } from "runcycles";
