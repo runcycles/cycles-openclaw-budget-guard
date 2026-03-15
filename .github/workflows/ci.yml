@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist output
+        run: |
+          test -f dist/index.js || (echo "dist/index.js missing" && exit 1)
+          test -f dist/index.d.ts || (echo "dist/index.d.ts missing" && exit 1)
+
+      - name: Verify plugin manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('openclaw.plugin.json','utf8'))"
+
+      - name: Verify plugin entrypoint
+        run: |
+          node -e "
+            import pluginFn from './dist/index.js';
+            if (typeof pluginFn !== 'function') { throw new Error('default export must be a function'); }
+
+            // Test disabled plugin does nothing
+            const registeredDisabled = [];
+            const disabledApi = {
+              config: { enabled: false, cyclesBaseUrl: 'x', cyclesApiKey: 'x', tenant: 'x' },
+              logger: { debug() {}, info() {}, warn() {}, error() {} },
+              on(name, handler, opts) { registeredDisabled.push(name); },
+            };
+            pluginFn(disabledApi);
+            if (registeredDisabled.length !== 0) { throw new Error('disabled plugin should not register hooks'); }
+
+            // Test enabled plugin registers all hooks
+            const registeredEnabled = [];
+            const enabledApi = {
+              config: { cyclesBaseUrl: 'http://localhost:8080', cyclesApiKey: 'test', tenant: 'test' },
+              logger: { debug() {}, info() {}, warn() {}, error() {} },
+              on(name, handler, opts) { registeredEnabled.push(name); },
+            };
+            pluginFn(enabledApi);
+            const expected = ['before_model_resolve','before_prompt_build','before_tool_call','after_tool_call','agent_end'];
+            for (const h of expected) {
+              if (!registeredEnabled.includes(h)) { throw new Error('missing hook: ' + h); }
+            }
+            console.log('All hooks registered correctly via api.on()');
+          "
+
+  publish:
+    name: Publish to npm
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

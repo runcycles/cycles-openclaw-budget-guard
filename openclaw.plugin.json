@@ -1,0 +1,92 @@
+{
+  "id": "cycles-openclaw-budget-guard",
+  "name": "Cycles OpenClaw Budget Guard",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
+  "extensions": ["./dist/index.js"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Master switch to enable or disable the plugin."
+      },
+      "cyclesBaseUrl": {
+        "type": "string",
+        "description": "Base URL of the Cycles server (e.g. https://cycles.example.com). Falls back to CYCLES_BASE_URL env var."
+      },
+      "cyclesApiKey": {
+        "type": "string",
+        "description": "API key for the Cycles server. Falls back to CYCLES_API_KEY env var."
+      },
+      "tenant": {
+        "type": "string",
+        "description": "Cycles tenant identifier for budget scoping."
+      },
+      "budgetId": {
+        "type": "string",
+        "description": "Optional budget identifier for more specific scope targeting."
+      },
+      "currency": {
+        "type": "string",
+        "default": "USD_MICROCENTS",
+        "description": "Cycles unit for budget amounts."
+      },
+      "defaultModelActionKind": {
+        "type": "string",
+        "default": "llm.completion",
+        "description": "Action kind used when reserving budget for model calls."
+      },
+      "defaultToolActionKindPrefix": {
+        "type": "string",
+        "default": "tool.",
+        "description": "Prefix prepended to tool names to form the action kind."
+      },
+      "lowBudgetThreshold": {
+        "type": "number",
+        "default": 10000000,
+        "description": "Remaining budget amount below which the budget is considered low (triggers model downgrade)."
+      },
+      "exhaustedThreshold": {
+        "type": "number",
+        "default": 0,
+        "description": "Remaining budget amount at or below which the budget is considered exhausted."
+      },
+      "modelFallbacks": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "default": {},
+        "description": "Map from expensive model name to cheaper fallback model name."
+      },
+      "toolBaseCosts": {
+        "type": "object",
+        "additionalProperties": { "type": "number" },
+        "default": {},
+        "description": "Map from tool name to estimated cost in the configured currency unit."
+      },
+      "injectPromptBudgetHint": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether to inject a short budget status hint into the system prompt."
+      },
+      "maxPromptHintChars": {
+        "type": "number",
+        "default": 200,
+        "description": "Maximum character length for the injected budget hint."
+      },
+      "failClosed": {
+        "type": "boolean",
+        "default": true,
+        "description": "If true, exhausted budget blocks execution. If false, logs a warning and continues."
+      },
+      "logLevel": {
+        "type": "string",
+        "enum": ["debug", "info", "warn", "error"],
+        "default": "info",
+        "description": "Minimum log level for plugin output."
+      }
+    },
+    "required": ["tenant"]
+  }
+}
