@@ -36,7 +36,7 @@ describe("formatBudgetHint", () => {
   it("healthy hint contains no warning text", () => {
     const snapshot = makeSnapshot({ level: "healthy", remaining: 50_000_000 });
     const hint = formatBudgetHint(snapshot, config);
-    expect(hint).toContain("50000000 USD_MICROCENTS remaining");
+    expect(hint).toContain("Budget: 50000000 USD_MICROCENTS remaining.");
     expect(hint).not.toContain("low");
     expect(hint).not.toContain("exhausted");
   });
