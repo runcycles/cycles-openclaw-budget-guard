@@ -200,6 +200,32 @@ npm run typecheck
 
 Output is written to `dist/index.js` (ESM) with TypeScript declarations.
 
+## CI & Publishing
+
+CI runs automatically on push and pull requests to `main` (typecheck, build, verify).
+
+To publish a new version to npm:
+
+```bash
+# Update version in package.json and openclaw.plugin.json
+npm version patch   # or minor / major
+
+# Push the tag — this triggers the publish workflow
+git push origin main --follow-tags
+```
+
+The publish workflow:
+- Triggers on `v*` tags (e.g. `v0.1.0`, `v0.2.0`)
+- Runs the full build pipeline first
+- Publishes to npm with `--provenance --access public`
+- Requires the `NPM_TOKEN` secret to be set in the repository settings
+
+After publishing, devs can install via:
+
+```bash
+npm install @runcycles/openclaw-budget-guard
+```
+
 ## License
 
 Apache-2.0
