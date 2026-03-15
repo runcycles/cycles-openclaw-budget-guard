@@ -45,6 +45,7 @@ export class DryRunClient {
     if (estimate > this.remaining) {
       return {
         isSuccess: true,
+        status: 200,
         body: {
           decision: "DENY",
           affectedScopes: [],
@@ -60,6 +61,7 @@ export class DryRunClient {
 
     return {
       isSuccess: true,
+      status: 200,
       body: {
         decision: "ALLOW",
         reservationId: id,
