@@ -35,13 +35,13 @@ If you don't have a Cycles server yet, see the [Cycles quickstart](https://githu
 
 ### 1. Install the plugin
 
-From npm (after the package is published):
-
 ```bash
-npm install @runcycles/openclaw-budget-guard
+openclaw plugins install @runcycles/openclaw-budget-guard
 ```
 
-Or install from a local checkout:
+This fetches the package from npm, extracts it into `~/.openclaw/extensions/cycles-openclaw-budget-guard/`, and registers it with OpenClaw.
+
+For local development, install from a checkout instead:
 
 ```bash
 openclaw plugins install -l ./cycles-openclaw-budget-guard
@@ -302,6 +302,8 @@ OpenClaw Runtime
 
 ## Local Development
 
+> **Note:** These commands are for developing the plugin itself. End users install via `openclaw plugins install` (see [Quick Start](#quick-start)).
+
 ```bash
 # Install dependencies
 npm install
@@ -335,10 +337,10 @@ The publish workflow:
 - Publishes to npm with `--provenance --access public`
 - Requires the `NPM_TOKEN` secret to be set in the repository settings
 
-After publishing, users can install via:
+After publishing, users install via the OpenClaw plugin manager:
 
 ```bash
-npm install @runcycles/openclaw-budget-guard
+openclaw plugins install @runcycles/openclaw-budget-guard
 ```
 
 ## License
