@@ -327,6 +327,31 @@ describe("beforeToolCall", () => {
     );
   });
 
+  it("handles ALLOW without reservationId", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({
+      decision: "ALLOW",
+      reservationId: undefined,
+      affectedScopes: [],
+    });
+
+    const result = await beforeToolCall(
+      { toolName: "web_search", toolCallId: "call-no-id" },
+      makeHookContext(),
+    );
+    expect(result).toBeUndefined();
+
+    // afterToolCall should not find a reservation to commit
+    mockCommitUsage.mockClear();
+    await afterToolCall(
+      { toolName: "web_search", toolCallId: "call-no-id" },
+      makeHookContext(),
+    );
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+  });
+
   it("builds correct actionKind", async () => {
     setup({ defaultToolActionKindPrefix: "tool." });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
@@ -500,6 +525,15 @@ describe("agentEnd", () => {
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
     await agentEnd({}, makeHookContext());
     expect(mockReleaseReservation).not.toHaveBeenCalled();
+  });
+
+  it("handles ctx without metadata", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+
+    const ctx = { ...makeHookContext(), metadata: undefined };
+    // Should not throw when metadata is absent
+    await expect(agentEnd({}, ctx)).resolves.toBeUndefined();
   });
 
   it("attaches summary to ctx.metadata", async () => {

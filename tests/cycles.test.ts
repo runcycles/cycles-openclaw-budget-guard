@@ -91,6 +91,23 @@ describe("fetchBudgetState", () => {
     expect(snapshot.level).toBe("healthy");
   });
 
+  it("returns fail-open snapshot on API error without errorMessage", async () => {
+    mockGetBalances.mockResolvedValue({
+      isSuccess: false,
+      status: 500,
+      errorMessage: undefined,
+    });
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("unknown"),
+    );
+  });
+
   it("returns fail-open snapshot on API error", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: false,
@@ -330,6 +347,21 @@ describe("commitUsage", () => {
     vi.clearAllMocks();
   });
 
+  it("commits successfully without warning", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-ok", 500_000, "USD_MICROCENTS", logger);
+    expect(mockCommitReservation).toHaveBeenCalledWith("res-ok", {
+      idempotency_key: "test-uuid-1234",
+      actual: { unit: "USD_MICROCENTS", amount: 500_000 },
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it("does not throw on API error", async () => {
     mockCommitReservation.mockResolvedValue({
       isSuccess: false,
@@ -359,6 +391,20 @@ describe("releaseReservation", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("releases successfully", async () => {
+    mockReleaseReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "released" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await releaseReservation(client, "res-ok", "cleanup", logger);
+    expect(mockReleaseReservation).toHaveBeenCalledWith("res-ok", {
+      idempotency_key: "test-uuid-1234",
+      reason: "cleanup",
+    });
   });
 
   it("does not throw on API error", async () => {
