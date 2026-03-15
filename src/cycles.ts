@@ -34,15 +34,25 @@ export function createCyclesClient(config: BudgetGuardConfig): CyclesClient {
 // Budget state
 // ---------------------------------------------------------------------------
 
+export interface FetchBudgetStateOptions {
+  userId?: string;
+  sessionId?: string;
+}
+
 export async function fetchBudgetState(
   client: CyclesClient,
   config: BudgetGuardConfig,
   logger: OpenClawLogger,
+  opts?: FetchBudgetStateOptions,
 ): Promise<BudgetSnapshot> {
   const params: Record<string, string> = { tenant: config.tenant };
   if (config.budgetId) {
     params.app = config.budgetId;
   }
+  const userId = opts?.userId ?? config.userId;
+  const sessionId = opts?.sessionId ?? config.sessionId;
+  if (userId) params.user = userId;
+  if (sessionId) params.session = sessionId;
 
   const response = await client.getBalances(params);
 
@@ -71,12 +81,30 @@ export async function fetchBudgetState(
   const spent = match.spent?.amount ?? 0;
   const allocated = match.allocated?.amount;
 
+  // Gap 18: Pool balance — fetch parent scope balance if configured
+  let poolRemaining: number | undefined;
+  let poolAllocated: number | undefined;
+  if (config.parentBudgetId) {
+    const poolBalance = parsed.balances.find(
+      (b) =>
+        b.remaining.unit === config.currency &&
+        (b.scope.includes(config.parentBudgetId!) ||
+          b.scopePath.includes(config.parentBudgetId!)),
+    );
+    if (poolBalance) {
+      poolRemaining = poolBalance.remaining.amount;
+      poolAllocated = poolBalance.allocated?.amount;
+    }
+  }
+
   return {
     remaining,
     reserved,
     spent,
     allocated,
     level: classifyBudget(remaining, config),
+    poolRemaining,
+    poolAllocated,
   };
 }
 
@@ -113,6 +141,11 @@ export interface ReserveOptions {
   actionKind: string;
   actionName: string;
   estimate: number;
+  ttlMs?: number;
+  overagePolicy?: string;
+  userId?: string;
+  sessionId?: string;
+  unit?: string;
 }
 
 export async function reserveBudget(
@@ -120,16 +153,21 @@ export async function reserveBudget(
   config: BudgetGuardConfig,
   opts: ReserveOptions,
 ): Promise<ReservationCreateResponse> {
+  const userId = opts.userId ?? config.userId;
+  const sessionId = opts.sessionId ?? config.sessionId;
+
   const body: Record<string, unknown> = {
     idempotency_key: randomUUID(),
     subject: {
       tenant: config.tenant,
       ...(config.budgetId ? { app: config.budgetId } : {}),
+      ...(userId ? { user: userId } : {}),
+      ...(sessionId ? { session: sessionId } : {}),
     },
     action: { kind: opts.actionKind, name: opts.actionName },
-    estimate: { unit: config.currency, amount: opts.estimate },
-    ttl_ms: 60_000,
-    overage_policy: "REJECT",
+    estimate: { unit: opts.unit ?? config.currency, amount: opts.estimate },
+    ttl_ms: opts.ttlMs ?? config.reservationTtlMs,
+    overage_policy: opts.overagePolicy ?? config.overagePolicy,
   };
 
   const response = await client.createReservation(body);

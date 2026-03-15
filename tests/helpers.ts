@@ -33,6 +33,48 @@ export function makeConfig(
     maxPromptHintChars: 200,
     failClosed: true,
     logLevel: "info",
+    // Gap 1
+    modelBaseCosts: {},
+    defaultModelCost: 500_000,
+    // Gap 2
+    costEstimator: undefined,
+    // Gap 3
+    userId: undefined,
+    sessionId: undefined,
+    // Gap 8
+    reservationTtlMs: 60_000,
+    toolReservationTtls: undefined,
+    // Gap 11
+    snapshotCacheTtlMs: 5_000,
+    // Gap 16
+    overagePolicy: "REJECT",
+    toolOveragePolicies: undefined,
+    // Gap 5
+    onBudgetTransition: undefined,
+    budgetTransitionWebhookUrl: undefined,
+    // Gap 7
+    toolAllowlist: undefined,
+    toolBlocklist: undefined,
+    // Gap 13
+    lowBudgetStrategies: ["downgrade_model"],
+    maxTokensWhenLow: 1024,
+    expensiveToolThreshold: undefined,
+    maxRemainingCallsWhenLow: 10,
+    // Gap 17
+    retryOnDeny: false,
+    retryDelayMs: 2_000,
+    maxRetries: 1,
+    // Gap 10
+    dryRun: false,
+    dryRunBudget: 100_000_000,
+    // Gap 15
+    onSessionEnd: undefined,
+    analyticsWebhookUrl: undefined,
+    // Gap 14
+    toolCurrencies: undefined,
+    modelCurrency: undefined,
+    // Gap 18
+    parentBudgetId: undefined,
     ...overrides,
   };
 }

@@ -46,6 +46,52 @@ describe("resolveConfig", () => {
     expect(cfg.logLevel).toBe("info");
   });
 
+  it("returns new field defaults with minimal valid config", () => {
+    const cfg = resolveConfig(minValid);
+    // Gap 1
+    expect(cfg.modelBaseCosts).toEqual({});
+    expect(cfg.defaultModelCost).toBe(500_000);
+    // Gap 2
+    expect(cfg.costEstimator).toBeUndefined();
+    // Gap 3
+    expect(cfg.userId).toBeUndefined();
+    expect(cfg.sessionId).toBeUndefined();
+    // Gap 8
+    expect(cfg.reservationTtlMs).toBe(60_000);
+    expect(cfg.toolReservationTtls).toBeUndefined();
+    // Gap 11
+    expect(cfg.snapshotCacheTtlMs).toBe(5_000);
+    // Gap 16
+    expect(cfg.overagePolicy).toBe("REJECT");
+    expect(cfg.toolOveragePolicies).toBeUndefined();
+    // Gap 5
+    expect(cfg.onBudgetTransition).toBeUndefined();
+    expect(cfg.budgetTransitionWebhookUrl).toBeUndefined();
+    // Gap 7
+    expect(cfg.toolAllowlist).toBeUndefined();
+    expect(cfg.toolBlocklist).toBeUndefined();
+    // Gap 13
+    expect(cfg.lowBudgetStrategies).toEqual(["downgrade_model"]);
+    expect(cfg.maxTokensWhenLow).toBe(1024);
+    expect(cfg.expensiveToolThreshold).toBeUndefined();
+    expect(cfg.maxRemainingCallsWhenLow).toBe(10);
+    // Gap 17
+    expect(cfg.retryOnDeny).toBe(false);
+    expect(cfg.retryDelayMs).toBe(2_000);
+    expect(cfg.maxRetries).toBe(1);
+    // Gap 10
+    expect(cfg.dryRun).toBe(false);
+    expect(cfg.dryRunBudget).toBe(100_000_000);
+    // Gap 15
+    expect(cfg.onSessionEnd).toBeUndefined();
+    expect(cfg.analyticsWebhookUrl).toBeUndefined();
+    // Gap 14
+    expect(cfg.toolCurrencies).toBeUndefined();
+    expect(cfg.modelCurrency).toBeUndefined();
+    // Gap 18
+    expect(cfg.parentBudgetId).toBeUndefined();
+  });
+
   it("throws when cyclesBaseUrl is missing", () => {
     expect(() => resolveConfig({ cyclesApiKey: "k", tenant: "t" })).toThrow(
       "cyclesBaseUrl is required",
@@ -105,12 +151,20 @@ describe("resolveConfig", () => {
     expect(cfg.exhaustedThreshold).toBe(100);
   });
 
-  it("parses modelFallbacks record", () => {
+  it("parses modelFallbacks record (string)", () => {
     const cfg = resolveConfig({
       ...minValid,
       modelFallbacks: { "gpt-4o": "gpt-4o-mini" },
     });
     expect(cfg.modelFallbacks).toEqual({ "gpt-4o": "gpt-4o-mini" });
+  });
+
+  it("parses modelFallbacks record (array — Gap 4)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      modelFallbacks: { "opus": ["sonnet", "haiku"] },
+    });
+    expect(cfg.modelFallbacks).toEqual({ "opus": ["sonnet", "haiku"] });
   });
 
   it("parses toolBaseCosts record", () => {
@@ -132,7 +186,6 @@ describe("resolveConfig", () => {
   });
 
   it("ignores non-string values for string fields", () => {
-    // cyclesBaseUrl is required, but if it's a number the env var fallback should be used
     process.env.CYCLES_BASE_URL = "http://fallback";
     const cfg = resolveConfig({
       cyclesBaseUrl: 12345 as unknown as string,
@@ -148,5 +201,94 @@ describe("resolveConfig", () => {
       modelFallbacks: [1, 2, 3] as unknown as Record<string, string>,
     });
     expect(cfg.modelFallbacks).toEqual({});
+  });
+
+  it("parses costEstimator function (Gap 2)", () => {
+    const fn = () => 42;
+    const cfg = resolveConfig({ ...minValid, costEstimator: fn });
+    expect(cfg.costEstimator).toBe(fn);
+  });
+
+  it("ignores non-function for costEstimator", () => {
+    const cfg = resolveConfig({ ...minValid, costEstimator: "not-a-function" });
+    expect(cfg.costEstimator).toBeUndefined();
+  });
+
+  it("parses userId and sessionId (Gap 3)", () => {
+    const cfg = resolveConfig({ ...minValid, userId: "u1", sessionId: "s1" });
+    expect(cfg.userId).toBe("u1");
+    expect(cfg.sessionId).toBe("s1");
+  });
+
+  it("parses reservationTtlMs and toolReservationTtls (Gap 8)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      reservationTtlMs: 120_000,
+      toolReservationTtls: { slow: 300_000 },
+    });
+    expect(cfg.reservationTtlMs).toBe(120_000);
+    expect(cfg.toolReservationTtls).toEqual({ slow: 300_000 });
+  });
+
+  it("parses snapshotCacheTtlMs (Gap 11)", () => {
+    const cfg = resolveConfig({ ...minValid, snapshotCacheTtlMs: 10_000 });
+    expect(cfg.snapshotCacheTtlMs).toBe(10_000);
+  });
+
+  it("parses overagePolicy and toolOveragePolicies (Gap 16)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      overagePolicy: "ALLOW",
+      toolOveragePolicies: { risky: "ALLOW_WITH_CAPS" },
+    });
+    expect(cfg.overagePolicy).toBe("ALLOW");
+    expect(cfg.toolOveragePolicies).toEqual({ risky: "ALLOW_WITH_CAPS" });
+  });
+
+  it("parses toolAllowlist and toolBlocklist (Gap 7)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolAllowlist: ["web_search", "code_*"],
+      toolBlocklist: ["dangerous_tool"],
+    });
+    expect(cfg.toolAllowlist).toEqual(["web_search", "code_*"]);
+    expect(cfg.toolBlocklist).toEqual(["dangerous_tool"]);
+  });
+
+  it("ignores invalid array for string array fields", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolAllowlist: [1, 2, 3] as unknown as string[],
+    });
+    expect(cfg.toolAllowlist).toBeUndefined();
+  });
+
+  it("parses lowBudgetStrategies (Gap 13)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      lowBudgetStrategies: ["downgrade_model", "reduce_max_tokens"],
+    });
+    expect(cfg.lowBudgetStrategies).toEqual(["downgrade_model", "reduce_max_tokens"]);
+  });
+
+  it("parses dryRun and dryRunBudget (Gap 10)", () => {
+    const cfg = resolveConfig({ ...minValid, dryRun: true, dryRunBudget: 50_000_000 });
+    expect(cfg.dryRun).toBe(true);
+    expect(cfg.dryRunBudget).toBe(50_000_000);
+  });
+
+  it("parses toolCurrencies and modelCurrency (Gap 14)", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolCurrencies: { token_tool: "TOKENS" },
+      modelCurrency: "CREDITS",
+    });
+    expect(cfg.toolCurrencies).toEqual({ token_tool: "TOKENS" });
+    expect(cfg.modelCurrency).toBe("CREDITS");
+  });
+
+  it("parses parentBudgetId (Gap 18)", () => {
+    const cfg = resolveConfig({ ...minValid, parentBudgetId: "team-pool" });
+    expect(cfg.parentBudgetId).toBe("team-pool");
   });
 });

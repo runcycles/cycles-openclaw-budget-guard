@@ -1,4 +1,4 @@
-/** Budget classification and prompt hint formatting. */
+/** Budget classification, prompt hint formatting, and tool permission checks. */
 
 import type { BudgetGuardConfig, BudgetLevel, BudgetSnapshot } from "./types.js";
 
@@ -11,9 +11,21 @@ export function classifyBudget(
   return "healthy";
 }
 
+// ---------------------------------------------------------------------------
+// Budget hint formatting (Gap 9: forecast, Gap 18: pool info)
+// ---------------------------------------------------------------------------
+
+export interface ForecastData {
+  avgToolCost: number;
+  avgModelCost: number;
+  totalToolCalls: number;
+  totalModelCalls: number;
+}
+
 export function formatBudgetHint(
   snapshot: BudgetSnapshot,
   config: BudgetGuardConfig,
+  forecast?: ForecastData,
 ): string {
   const parts: string[] = [];
 
@@ -30,9 +42,66 @@ export function formatBudgetHint(
     parts.push(`${pct}% of budget remaining.`);
   }
 
+  // Gap 9: Forecast projection
+  if (forecast && snapshot.remaining < Infinity) {
+    const projections: string[] = [];
+    if (forecast.totalToolCalls > 0 && forecast.avgToolCost > 0) {
+      const remaining = Math.floor(snapshot.remaining / forecast.avgToolCost);
+      projections.push(`~${remaining} tool calls`);
+    }
+    if (forecast.totalModelCalls > 0 && forecast.avgModelCost > 0) {
+      const remaining = Math.floor(snapshot.remaining / forecast.avgModelCost);
+      projections.push(`~${remaining} model calls`);
+    }
+    if (projections.length > 0) {
+      parts.push(`Est. ${projections.join(" and ")} remaining at current rate.`);
+    }
+  }
+
+  // Gap 18: Pool info
+  if (snapshot.poolRemaining !== undefined) {
+    parts.push(`Team pool: ${snapshot.poolRemaining} remaining.`);
+  }
+
   const hint = parts.join(" ");
   if (hint.length > config.maxPromptHintChars) {
     return hint.slice(0, config.maxPromptHintChars - 3) + "...";
   }
   return hint;
+}
+
+// ---------------------------------------------------------------------------
+// Tool permission checks (Gap 7)
+// ---------------------------------------------------------------------------
+
+export function isToolPermitted(
+  toolName: string,
+  allowlist?: string[],
+  blocklist?: string[],
+): { permitted: boolean; reason?: string } {
+  if (blocklist) {
+    for (const pattern of blocklist) {
+      if (matchGlob(toolName, pattern)) {
+        return { permitted: false, reason: `Tool "${toolName}" is blocklisted (pattern: ${pattern})` };
+      }
+    }
+  }
+  if (allowlist) {
+    const allowed = allowlist.some((pattern) => matchGlob(toolName, pattern));
+    if (!allowed) {
+      return { permitted: false, reason: `Tool "${toolName}" is not on the allowlist` };
+    }
+  }
+  return { permitted: true };
+}
+
+function matchGlob(value: string, pattern: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern.endsWith("*")) {
+    return value.startsWith(pattern.slice(0, -1));
+  }
+  if (pattern.startsWith("*")) {
+    return value.endsWith(pattern.slice(1));
+  }
+  return value === pattern;
 }

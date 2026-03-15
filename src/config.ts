@@ -49,12 +49,68 @@ export function resolveConfig(
       asString(raw.defaultToolActionKindPrefix) ?? "tool.",
     lowBudgetThreshold,
     exhaustedThreshold,
-    modelFallbacks: asStringRecord(raw.modelFallbacks) ?? {},
+    modelFallbacks: asModelFallbacks(raw.modelFallbacks) ?? {},
     toolBaseCosts: asNumberRecord(raw.toolBaseCosts) ?? {},
     injectPromptBudgetHint: asBool(raw.injectPromptBudgetHint) ?? true,
     maxPromptHintChars: asNumber(raw.maxPromptHintChars) ?? 200,
     failClosed: asBool(raw.failClosed) ?? true,
     logLevel: asLogLevel(raw.logLevel) ?? "info",
+
+    // Gap 1: LLM call reservations
+    modelBaseCosts: asNumberRecord(raw.modelBaseCosts) ?? {},
+    defaultModelCost: asNumber(raw.defaultModelCost) ?? 500_000,
+
+    // Gap 2: Actual cost tracking
+    costEstimator: asFunction(raw.costEstimator) as BudgetGuardConfig["costEstimator"],
+
+    // Gap 3: Per-user/session scoping
+    userId: asString(raw.userId),
+    sessionId: asString(raw.sessionId),
+
+    // Gap 8: Configurable reservation TTL
+    reservationTtlMs: asNumber(raw.reservationTtlMs) ?? 60_000,
+    toolReservationTtls: asNumberRecord(raw.toolReservationTtls),
+
+    // Gap 11: Configurable snapshot cache TTL
+    snapshotCacheTtlMs: asNumber(raw.snapshotCacheTtlMs) ?? 5_000,
+
+    // Gap 16: Overage policy
+    overagePolicy: asString(raw.overagePolicy) ?? "REJECT",
+    toolOveragePolicies: asStringRecord(raw.toolOveragePolicies),
+
+    // Gap 5: Budget transition alerts
+    onBudgetTransition: asFunction(raw.onBudgetTransition) as BudgetGuardConfig["onBudgetTransition"],
+    budgetTransitionWebhookUrl: asString(raw.budgetTransitionWebhookUrl),
+
+    // Gap 7: Tool allowlist/blocklist
+    toolAllowlist: asStringArray(raw.toolAllowlist),
+    toolBlocklist: asStringArray(raw.toolBlocklist),
+
+    // Gap 13: Graceful degradation strategies
+    lowBudgetStrategies: asStringArray(raw.lowBudgetStrategies) ?? ["downgrade_model"],
+    maxTokensWhenLow: asNumber(raw.maxTokensWhenLow) ?? 1024,
+    expensiveToolThreshold: asNumber(raw.expensiveToolThreshold),
+    maxRemainingCallsWhenLow: asNumber(raw.maxRemainingCallsWhenLow) ?? 10,
+
+    // Gap 17: Retry on denied tool calls
+    retryOnDeny: asBool(raw.retryOnDeny) ?? false,
+    retryDelayMs: asNumber(raw.retryDelayMs) ?? 2_000,
+    maxRetries: asNumber(raw.maxRetries) ?? 1,
+
+    // Gap 10: Dry-run mode
+    dryRun: asBool(raw.dryRun) ?? false,
+    dryRunBudget: asNumber(raw.dryRunBudget) ?? 100_000_000,
+
+    // Gap 15: Cross-session analytics
+    onSessionEnd: asFunction(raw.onSessionEnd) as BudgetGuardConfig["onSessionEnd"],
+    analyticsWebhookUrl: asString(raw.analyticsWebhookUrl),
+
+    // Gap 14: Multi-currency
+    toolCurrencies: asStringRecord(raw.toolCurrencies),
+    modelCurrency: asString(raw.modelCurrency),
+
+    // Gap 18: Budget pools
+    parentBudgetId: asString(raw.parentBudgetId),
   };
 }
 
@@ -72,6 +128,11 @@ function asBool(v: unknown): boolean | undefined {
 
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+function asFunction(v: unknown): Function | undefined {
+  return typeof v === "function" ? v : undefined;
 }
 
 function asLogLevel(
@@ -102,6 +163,22 @@ function asNumberRecord(
 ): Record<string, number> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     return v as Record<string, number>;
+  }
+  return undefined;
+}
+
+function asStringArray(v: unknown): string[] | undefined {
+  if (Array.isArray(v) && v.every((item) => typeof item === "string")) {
+    return v as string[];
+  }
+  return undefined;
+}
+
+function asModelFallbacks(
+  v: unknown,
+): Record<string, string | string[]> | undefined {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    return v as Record<string, string | string[]>;
   }
   return undefined;
 }

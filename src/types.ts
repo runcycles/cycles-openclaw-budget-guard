@@ -15,12 +15,68 @@ export interface BudgetGuardConfig {
   defaultToolActionKindPrefix: string;
   lowBudgetThreshold: number;
   exhaustedThreshold: number;
-  modelFallbacks: Record<string, string>;
+  modelFallbacks: Record<string, string | string[]>;
   toolBaseCosts: Record<string, number>;
   injectPromptBudgetHint: boolean;
   maxPromptHintChars: number;
   failClosed: boolean;
   logLevel: "debug" | "info" | "warn" | "error";
+
+  // Phase 1 — Gap 1: LLM call reservations
+  modelBaseCosts: Record<string, number>;
+  defaultModelCost: number;
+
+  // Phase 1 — Gap 2: Actual cost tracking
+  costEstimator?: (context: CostEstimatorContext) => number | undefined;
+
+  // Phase 1 — Gap 3: Per-user/session scoping
+  userId?: string;
+  sessionId?: string;
+
+  // Phase 1 — Gap 8: Configurable reservation TTL
+  reservationTtlMs: number;
+  toolReservationTtls?: Record<string, number>;
+
+  // Phase 1 — Gap 11: Configurable snapshot cache TTL
+  snapshotCacheTtlMs: number;
+
+  // Phase 1 — Gap 16: Overage policy config
+  overagePolicy: string;
+  toolOveragePolicies?: Record<string, string>;
+
+  // Phase 2 — Gap 5: Budget transition alerts
+  onBudgetTransition?: (event: BudgetTransitionEvent) => void;
+  budgetTransitionWebhookUrl?: string;
+
+  // Phase 2 — Gap 7: Tool allowlist/blocklist
+  toolAllowlist?: string[];
+  toolBlocklist?: string[];
+
+  // Phase 3 — Gap 13: Graceful degradation strategies
+  lowBudgetStrategies: string[];
+  maxTokensWhenLow: number;
+  expensiveToolThreshold?: number;
+  maxRemainingCallsWhenLow: number;
+
+  // Phase 3 — Gap 17: Retry on denied tool calls
+  retryOnDeny: boolean;
+  retryDelayMs: number;
+  maxRetries: number;
+
+  // Phase 4 — Gap 10: Dry-run mode
+  dryRun: boolean;
+  dryRunBudget: number;
+
+  // Phase 4 — Gap 15: Cross-session analytics
+  onSessionEnd?: (summary: SessionSummary) => void | Promise<void>;
+  analyticsWebhookUrl?: string;
+
+  // Phase 5 — Gap 14: Multi-currency
+  toolCurrencies?: Record<string, string>;
+  modelCurrency?: string;
+
+  // Phase 5 — Gap 18: Budget pools
+  parentBudgetId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -35,6 +91,9 @@ export interface BudgetSnapshot {
   spent: number;
   allocated?: number;
   level: BudgetLevel;
+  // Phase 5 — Gap 18: Pool balance
+  poolRemaining?: number;
+  poolAllocated?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,14 +105,65 @@ export interface ActiveReservation {
   estimate: number;
   toolName: string;
   createdAt: number;
+  kind: "model" | "tool";
+  currency?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cost estimator context (Gap 2)
+// ---------------------------------------------------------------------------
+
+export interface CostEstimatorContext {
+  toolName: string;
+  estimate: number;
+  durationMs?: number;
+  result?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Budget transition event (Gap 5)
+// ---------------------------------------------------------------------------
+
+export interface BudgetTransitionEvent {
+  previousLevel: BudgetLevel;
+  currentLevel: BudgetLevel;
+  remaining: number;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Budget status metadata for end-user visibility (Gap 12)
+// ---------------------------------------------------------------------------
+
+export interface BudgetStatusMetadata {
+  level: BudgetLevel;
+  remaining: number;
+  allocated?: number;
+  percentRemaining?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Session summary (Gap 15)
+// ---------------------------------------------------------------------------
+
+export interface SessionSummary {
+  tenant: string;
+  budgetId?: string;
+  userId?: string;
+  sessionId?: string;
+  remaining: number;
+  spent: number;
+  reserved: number;
+  allocated?: number;
+  level: BudgetLevel;
+  totalReservationsMade: number;
+  costBreakdown: Record<string, { count: number; totalCost: number }>;
+  startedAt: number;
+  endedAt: number;
 }
 
 // ---------------------------------------------------------------------------
 // OpenClaw plugin API types
-//
-// These types represent the OpenClaw plugin registration API.
-// Plugins export a default function receiving the api object, and register
-// hooks via api.on(hookName, handler, opts).
 // ---------------------------------------------------------------------------
 
 /** Logger provided by the OpenClaw runtime via api.logger. */
