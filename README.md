@@ -33,6 +33,10 @@ The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typ
 
 If you don't have a Cycles server yet, see the [Cycles quickstart](https://github.com/runcycles) to set one up. Alternatively, use **dry-run mode** to test without a server.
 
+>To see budget enforcement in action before wiring up your own agent, run the 
+[Cycles Runaway Demo](https://github.com/runcycles/cycles-runaway-demo) — 
+it shows the exact failure mode this plugin prevents, with a live before/after comparison.
+
 ## Quick Start
 
 ### 1. Install the plugin
