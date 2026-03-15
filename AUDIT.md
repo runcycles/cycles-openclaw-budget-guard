@@ -12,7 +12,7 @@
 | Category | Pass | Issues |
 |----------|------|--------|
 | OpenClaw Plugin Contract | 4/4 | 0 |
-| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 43/43 | 0 |
+| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 44/44 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
 | Hook Return Types | 5/5 | 0 |
@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected.
+**Overall: Plugin is contract-conformant and production-ready.** All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected.
 
 ---
 
@@ -74,7 +74,7 @@ Remaining uncovered branches are implicit from nullish coalescing (`??`), option
 | `after_tool_call` | 10 | `void` | PASS |
 | `agent_end` | 100 | `void` | PASS |
 
-### Config Schema Alignment (all 43 fields match across 3 sources)
+### Config Schema Alignment (all 44 fields match across 3 sources)
 
 **Core fields (original 16):**
 
@@ -220,10 +220,10 @@ All request bodies use snake_case wire-format keys matching the Cycles Protocol 
 | 4 | Chained model fallbacks | hooks.ts (beforeModelResolve) | hooks.test.ts (1 test) | PASS |
 | 5 | Budget transition detection | hooks.ts (getSnapshot) | hooks.test.ts (3 tests) | PASS |
 | 6 | Per-tool cost breakdown tracking | hooks.ts (trackCost) | hooks.test.ts (1 test) | PASS |
-| 7 | Tool allowlist/blocklist | budget.ts (isToolPermitted) | budget.test.ts (9 tests), hooks.test.ts (2 tests) | PASS |
+| 7 | Tool allowlist/blocklist | budget.ts (isToolPermitted) | budget.test.ts (10 tests), hooks.test.ts (2 tests) | PASS |
 | 8 | Configurable reservation TTL | cycles.ts, hooks.ts | cycles.test.ts, hooks.test.ts (3 tests) | PASS |
 | 9 | Budget forecast projections | hooks.ts (buildForecast), budget.ts (formatBudgetHint) | budget.test.ts (2 tests), hooks.test.ts (2 tests) | PASS |
-| 10 | Dry-run simulation mode | dry-run.ts (DryRunClient) | dry-run.test.ts (7 tests), hooks.test.ts (1 test) | PASS |
+| 10 | Dry-run simulation mode | dry-run.ts (DryRunClient) | dry-run.test.ts (8 tests), hooks.test.ts (1 test) | PASS |
 | 11 | Configurable snapshot cache TTL | hooks.ts (getSnapshot) | hooks.test.ts (2 tests) | PASS |
 | 12 | Budget status in ctx.metadata | hooks.ts (attachBudgetStatus) | hooks.test.ts (1 test) | PASS |
 | 13 | Graceful degradation strategies | hooks.ts (beforeToolCall, beforePromptBuild, beforeModelResolve) | hooks.test.ts (6 tests) | PASS |
@@ -437,4 +437,4 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 43 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (185 tests, 100% line coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (185 tests, 100% line coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
