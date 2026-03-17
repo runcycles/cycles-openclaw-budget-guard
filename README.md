@@ -75,6 +75,8 @@ openclaw plugins enable cycles-openclaw-budget-guard
 
 That's it — the plugin uses sensible defaults for everything else. The agent will now enforce budget limits on every run.
 
+> **Need an API key?** API keys are created via the Cycles Admin Server (port 7979). See the [deployment guide](https://runcycles.io/quickstart/deploying-the-full-cycles-stack#step-3-create-an-api-key) to create one, or see [API Key Management](https://runcycles.io/how-to/api-key-management-in-cycles) for details.
+
 ### 4. (Optional) Use environment variables for secrets
 
 ```bash
