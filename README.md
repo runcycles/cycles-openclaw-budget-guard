@@ -521,6 +521,12 @@ After publishing, users install via:
 openclaw plugins install @runcycles/openclaw-budget-guard
 ```
 
+## Documentation
+
+- [Cycles Documentation](https://runcycles.io) — full docs site
+- [OpenClaw Integration Guide](https://runcycles.io/how-to/integrating-cycles-with-openclaw) — detailed integration guide
+- [API Key Management](https://runcycles.io/how-to/api-key-management-in-cycles) — creating and managing API keys
+
 ## License
 
 Apache-2.0
