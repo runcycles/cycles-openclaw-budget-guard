@@ -178,7 +178,7 @@ The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is 
 
 | Field | plugin.json | types.ts | config.ts default | Match |
 |---|---|---|---|---|
-| `overagePolicy` | string | `string` | `REJECT` | PASS |
+| `overagePolicy` | string | `string` | `ALLOW_IF_AVAILABLE` | PASS |
 | `toolOveragePolicies` | object | `Record<string, string>?` | `undefined` | PASS |
 
 **Gap 17 — Retry on deny:**
@@ -401,7 +401,7 @@ subject: {
 **Severity:** Medium — Documentation/test correctness
 
 Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` enum values). The correct `CommitOveragePolicy` enum values are:
-- `REJECT` (default)
+- `ALLOW_IF_AVAILABLE` (default)
 - `ALLOW_IF_AVAILABLE`
 - `ALLOW_WITH_OVERDRAFT`
 

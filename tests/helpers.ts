@@ -47,7 +47,7 @@ export function makeConfig(
     // Gap 11
     snapshotCacheTtlMs: 5_000,
     // Gap 16
-    overagePolicy: "REJECT",
+    overagePolicy: "ALLOW_IF_AVAILABLE",
     toolOveragePolicies: undefined,
     // Gap 5
     onBudgetTransition: undefined,

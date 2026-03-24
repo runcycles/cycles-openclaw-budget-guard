@@ -146,7 +146,7 @@ To test without a live Cycles server:
         "failClosed": true,
         "logLevel": "info",
         "reservationTtlMs": 60000,
-        "overagePolicy": "REJECT",
+        "overagePolicy": "ALLOW_IF_AVAILABLE",
         "lowBudgetStrategies": ["downgrade_model"],
         "maxTokensWhenLow": 1024,
         "retryOnDeny": false,
@@ -215,7 +215,7 @@ To test without a live Cycles server:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `reservationTtlMs` | number | `60000` | Default TTL for tool reservations (ms) |
-| `overagePolicy` | string | `REJECT` | Default overage policy (`REJECT`, `ALLOW_IF_AVAILABLE`, `ALLOW_WITH_OVERDRAFT`) |
+| `overagePolicy` | string | `ALLOW_IF_AVAILABLE` | Default overage policy (`REJECT`, `ALLOW_IF_AVAILABLE`, `ALLOW_WITH_OVERDRAFT`) |
 | `snapshotCacheTtlMs` | number | `5000` | How long to cache budget snapshots (ms) |
 
 ### Low Budget Strategies

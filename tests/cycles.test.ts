@@ -393,7 +393,7 @@ describe("reserveBudget", () => {
       action: { kind: "tool.code_exec", name: "code_exec" },
       estimate: { unit: "USD_MICROCENTS", amount: 1_000_000 },
       ttl_ms: 60_000,
-      overage_policy: "REJECT",
+      overage_policy: "ALLOW_IF_AVAILABLE",
     });
   });
 
