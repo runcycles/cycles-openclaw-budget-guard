@@ -235,20 +235,20 @@ export interface CostEstimatorContext {
 
 ### Gap 16: Overage Policy Configuration
 
-**Goal:** Make the hard-coded `"REJECT"` overage policy configurable.
+**Goal:** Make the hard-coded `"ALLOW_IF_AVAILABLE"` overage policy configurable.
 
 **Config changes (`types.ts` → `BudgetGuardConfig`):**
-- Add `overagePolicy: string` — default `"REJECT"`. Valid: `"REJECT"`,
+- Add `overagePolicy: string` — default `"ALLOW_IF_AVAILABLE"`. Valid: `"REJECT"`,
   `"ALLOW"`, `"ALLOW_WITH_CAPS"`.
 - Add `toolOveragePolicies?: Record<string, string>` — per-tool overrides.
 
 **Config resolution (`config.ts`):**
-- Parse `overagePolicy` with `asString()`, default `"REJECT"`.
+- Parse `overagePolicy` with `asString()`, default `"ALLOW_IF_AVAILABLE"`.
 - Parse `toolOveragePolicies` with `asStringRecord()`, default `undefined`.
 
 **Cycles changes (`cycles.ts` → `reserveBudget`):**
 - Add `overagePolicy?: string` to `ReserveOptions`.
-- Use `opts.overagePolicy ?? "REJECT"` instead of hard-coded `"REJECT"`.
+- Use `opts.overagePolicy ?? "ALLOW_IF_AVAILABLE"` instead of hard-coded `"ALLOW_IF_AVAILABLE"`.
 
 **Hook changes (`hooks.ts` → `beforeToolCall`):**
 - Compute policy: `config.toolOveragePolicies?.[toolName] ?? config.overagePolicy`.
@@ -257,7 +257,7 @@ export interface CostEstimatorContext {
 **Tests:**
 - Test custom overage policy in reservation body.
 - Test per-tool override.
-- Test default REJECT.
+- Test default ALLOW_IF_AVAILABLE.
 
 ---
 
@@ -898,7 +898,7 @@ Phase 5 (Gaps 14,18)  ── Enterprise / multi-tenant
 | 1 | `reservationTtlMs` | `number` | `60_000` |
 | 1 | `toolReservationTtls` | `Record<string, number>` | `undefined` |
 | 1 | `snapshotCacheTtlMs` | `number` | `5_000` |
-| 1 | `overagePolicy` | `string` | `"REJECT"` |
+| 1 | `overagePolicy` | `string` | `"ALLOW_IF_AVAILABLE"` |
 | 1 | `toolOveragePolicies` | `Record<string, string>` | `undefined` |
 | 2 | `onBudgetTransition` | `function` | `undefined` |
 | 2 | `budgetTransitionWebhookUrl` | `string` | `undefined` |

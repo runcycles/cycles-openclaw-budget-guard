@@ -189,9 +189,9 @@ Applied across `beforeModelResolve`, `beforePromptBuild`, and `beforeToolCall`.
 
 ### 16. Overage Policy Configuration — IMPLEMENTED
 
-**Problem:** Overage policy was hard-coded to `"REJECT"`.
+**Problem:** Overage policy was hard-coded to `"ALLOW_IF_AVAILABLE"`.
 
-**Solution:** Added `overagePolicy` config (default `"REJECT"`) and `toolOveragePolicies` for per-tool overrides. Passed through to Cycles reservation requests.
+**Solution:** Added `overagePolicy` config (default `"ALLOW_IF_AVAILABLE"`) and `toolOveragePolicies` for per-tool overrides. Passed through to Cycles reservation requests.
 
 **Config fields added:** `overagePolicy`, `toolOveragePolicies`
 

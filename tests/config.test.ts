@@ -62,7 +62,7 @@ describe("resolveConfig", () => {
     // Gap 11
     expect(cfg.snapshotCacheTtlMs).toBe(5_000);
     // Gap 16
-    expect(cfg.overagePolicy).toBe("REJECT");
+    expect(cfg.overagePolicy).toBe("ALLOW_IF_AVAILABLE");
     expect(cfg.toolOveragePolicies).toBeUndefined();
     // Gap 5
     expect(cfg.onBudgetTransition).toBeUndefined();

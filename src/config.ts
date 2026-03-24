@@ -75,7 +75,7 @@ export function resolveConfig(
     snapshotCacheTtlMs: asNumber(raw.snapshotCacheTtlMs) ?? 5_000,
 
     // Gap 16: Overage policy
-    overagePolicy: asString(raw.overagePolicy) ?? "REJECT",
+    overagePolicy: asString(raw.overagePolicy) ?? "ALLOW_IF_AVAILABLE",
     toolOveragePolicies: asStringRecord(raw.toolOveragePolicies),
 
     // Gap 5: Budget transition alerts

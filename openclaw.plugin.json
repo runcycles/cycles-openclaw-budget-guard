@@ -127,7 +127,7 @@
       },
       "overagePolicy": {
         "type": "string",
-        "default": "REJECT",
+        "default": "ALLOW_IF_AVAILABLE",
         "description": "Overage policy for budget reservations (REJECT, ALLOW_IF_AVAILABLE, ALLOW_WITH_OVERDRAFT)."
       },
       "toolOveragePolicies": {
