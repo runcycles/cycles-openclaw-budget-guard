@@ -526,6 +526,7 @@ export async function beforeModelResolve(
         `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
       );
       emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: result.reasonCode ?? "denied" });
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(

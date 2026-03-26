@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 60 config properties (52 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
+**Overall: Plugin is contract-conformant and production-ready.** All 60 config properties (53 JSON-serializable + 7 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
 
 ---
 
