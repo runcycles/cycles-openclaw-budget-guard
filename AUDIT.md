@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-26
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.3.4
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.4.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -27,11 +27,11 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.3.4 adds critical install/config-loading fixes and startup diagnostics.
+**Overall: Plugin is contract-conformant and production-ready.** All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics.
 
 ---
 
-## v0.3.4 Changes (2026-03-26)
+## v0.4.0 Changes (2026-03-26)
 
 ### Critical fixes
 
@@ -54,6 +54,21 @@
 |---|---|---|
 | Added `pluginConfig` to `OpenClawPluginApi` | Optional `Record<string, unknown>` for OpenClaw SDK `api.pluginConfig` | `src/types.ts:189` |
 
+### Code quality fixes (from audit)
+
+| Issue | Fix | Location |
+|---|---|---|
+| User/session ID resolution inconsistent — `beforeModelResolve` reads `ctx.metadata.userId` but `beforeToolCall` doesn't | Added same resolution logic to `beforeToolCall` | `hooks.ts:386-387` |
+| Dead code — `modelReservationCounter` stored and immediately deleted | Removed counter and simplified model reservation to direct commit | `hooks.ts` |
+| No overage policy validation — invalid strings pass through to API | Added validation against `REJECT`, `ALLOW_IF_AVAILABLE`, `ALLOW_WITH_OVERDRAFT` for both global and per-tool policies | `config.ts` |
+| No threshold validation — negative values or zero `maxRemainingCallsWhenLow` accepted | Added non-negative checks for thresholds and `>= 1` for `maxRemainingCallsWhenLow` | `config.ts` |
+
+### New features (from audit)
+
+| Feature | Description | Location |
+|---|---|---|
+| Tool call limits (`toolCallLimits`) | Per-tool invocation caps per session (e.g., `{"send_email": 10}`) — blocks tool when limit reached | `hooks.ts`, `config.ts`, `types.ts`, `openclaw.plugin.json` |
+
 ### Documentation fixes
 
 - All README and docs config examples now use correct `plugins.entries.<id>.config.{...}` structure
@@ -69,7 +84,7 @@
 ```
 File         | % Stmts | % Branch | % Funcs | % Lines
 -------------|---------|----------|---------|--------
-All files    |   99.76 |    99.16 |   98.33 |    100
+All files    |   99.78 |    99.25 |   98.33 |    100
   budget.ts  |     100 |      100 |     100 |    100
   config.ts  |     100 |      100 |     100 |    100
   cycles.ts  |   98.46 |      100 |      90 |    100
@@ -80,7 +95,7 @@ All files    |   99.76 |    99.16 |   98.33 |    100
   types.ts   |     100 |      100 |     100 |    100
 ```
 
-202 tests across 8 test files. **100% line coverage, 99% branch coverage.**
+217 tests across 8 test files. **100% line coverage, 99% branch coverage.**
 
 The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is always provided by OpenClaw, `reservation.currency` is always set at creation, and `shouldLog("error")` is always true since error is the highest log level.
 
@@ -470,4 +485,4 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.

@@ -30,10 +30,61 @@ export function resolveConfig(
   const lowBudgetThreshold = asNumber(raw.lowBudgetThreshold) ?? 10_000_000;
   const exhaustedThreshold = asNumber(raw.exhaustedThreshold) ?? 0;
 
+  if (lowBudgetThreshold < 0) {
+    throw new Error(
+      `[cycles-budget-guard] lowBudgetThreshold (${lowBudgetThreshold}) must be non-negative`,
+    );
+  }
+
+  if (exhaustedThreshold < 0) {
+    throw new Error(
+      `[cycles-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be non-negative`,
+    );
+  }
+
   if (exhaustedThreshold >= lowBudgetThreshold) {
     throw new Error(
       `[cycles-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be less than lowBudgetThreshold (${lowBudgetThreshold})`,
     );
+  }
+
+  const maxRemainingCallsWhenLow = asNumber(raw.maxRemainingCallsWhenLow) ?? 10;
+  if (maxRemainingCallsWhenLow < 1) {
+    throw new Error(
+      `[cycles-budget-guard] maxRemainingCallsWhenLow (${maxRemainingCallsWhenLow}) must be at least 1`,
+    );
+  }
+
+  const VALID_OVERAGE_POLICIES = ["REJECT", "ALLOW_IF_AVAILABLE", "ALLOW_WITH_OVERDRAFT"];
+  const overagePolicy = asString(raw.overagePolicy) ?? "ALLOW_IF_AVAILABLE";
+  if (!VALID_OVERAGE_POLICIES.includes(overagePolicy)) {
+    throw new Error(
+      `[cycles-budget-guard] overagePolicy "${overagePolicy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
+    );
+  }
+
+  // Validate per-tool overage policies
+  const toolOveragePolicies = asStringRecord(raw.toolOveragePolicies);
+  if (toolOveragePolicies) {
+    for (const [tool, policy] of Object.entries(toolOveragePolicies)) {
+      if (!VALID_OVERAGE_POLICIES.includes(policy)) {
+        throw new Error(
+          `[cycles-budget-guard] toolOveragePolicies["${tool}"] = "${policy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
+        );
+      }
+    }
+  }
+
+  // Validate tool call limits if provided
+  const toolCallLimits = asNumberRecord(raw.toolCallLimits);
+  if (toolCallLimits) {
+    for (const [tool, limit] of Object.entries(toolCallLimits)) {
+      if (limit < 1) {
+        throw new Error(
+          `[cycles-budget-guard] toolCallLimits["${tool}"] = ${limit} must be at least 1`,
+        );
+      }
+    }
   }
 
   return {
@@ -75,8 +126,8 @@ export function resolveConfig(
     snapshotCacheTtlMs: asNumber(raw.snapshotCacheTtlMs) ?? 5_000,
 
     // Gap 16: Overage policy
-    overagePolicy: asString(raw.overagePolicy) ?? "ALLOW_IF_AVAILABLE",
-    toolOveragePolicies: asStringRecord(raw.toolOveragePolicies),
+    overagePolicy,
+    toolOveragePolicies,
 
     // Gap 5: Budget transition alerts
     onBudgetTransition: asFunction(raw.onBudgetTransition) as BudgetGuardConfig["onBudgetTransition"],
@@ -90,7 +141,7 @@ export function resolveConfig(
     lowBudgetStrategies: asStringArray(raw.lowBudgetStrategies) ?? ["downgrade_model"],
     maxTokensWhenLow: asNumber(raw.maxTokensWhenLow) ?? 1024,
     expensiveToolThreshold: asNumber(raw.expensiveToolThreshold),
-    maxRemainingCallsWhenLow: asNumber(raw.maxRemainingCallsWhenLow) ?? 10,
+    maxRemainingCallsWhenLow,
 
     // Gap 17: Retry on denied tool calls
     retryOnDeny: asBool(raw.retryOnDeny) ?? false,
@@ -111,6 +162,9 @@ export function resolveConfig(
 
     // Gap 18: Budget pools
     parentBudgetId: asString(raw.parentBudgetId),
+
+    // Tool call limits (per-tool invocation caps per session)
+    toolCallLimits,
   };
 }
 

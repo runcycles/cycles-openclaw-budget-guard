@@ -8,6 +8,24 @@
 
 OpenClaw plugin for budget-aware model and tool execution using [Cycles](https://github.com/runcycles).
 
+## Why use this plugin?
+
+AI agents make autonomous decisions — calling models, invoking tools, retrying on failure — with no human in the loop. Without runtime enforcement, several things go wrong:
+
+**Runaway spend.** A single agent stuck in a tool loop or retrying failed calls can burn through hundreds of dollars in minutes. Provider spending caps are account-wide and too coarse. Rate limits don't account for cost. In-app counters don't survive restarts or coordinate across concurrent agents.
+
+**Uncontrolled side-effects.** An agent can send 100 emails, trigger 50 deployments, or call dangerous APIs with nothing to stop it. Cost limits alone don't help — some actions are consequential regardless of price.
+
+**Noisy neighbors.** In multi-tenant or multi-user setups, one agent can consume the entire team or tenant budget, starving other users. Without per-user scoping, there's no isolation.
+
+**No visibility.** When an agent session ends, you have no idea what it spent, which tools it called most, or whether it was cost-efficient. Debugging cost overruns after the fact is painful.
+
+**Graceless failure.** When budget runs out, the agent crashes instead of adapting — switching to cheaper models, reducing output length, or disabling expensive tools.
+
+This plugin solves all five. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded, expensive tools are disabled, and the agent is told about its remaining budget so it can self-regulate. When budget is exhausted, execution stops. Side-effects are capped per tool. Spend is isolated per user, session, or team. And every session produces a cost breakdown so you know exactly what happened.
+
+> For deeper background, see [Why Rate Limits Are Not Enough](https://runcycles.io/concepts/why-rate-limits-are-not-enough-for-autonomous-systems) and [Runaway Agents and Tool Loops](https://runcycles.io/incidents/runaway-agents-tool-loops-and-budget-overruns-the-incidents-cycles-is-designed-to-prevent).
+
 ## Overview
 
 A comprehensive OpenClaw plugin that integrates with a live Cycles server to enforce budget boundaries during agent execution. It hooks into the OpenClaw plugin lifecycle to:
@@ -148,6 +166,10 @@ To test without a live Cycles server:
             "web_search": 500000,
             "code_execution": 1000000
           },
+          "toolCallLimits": {
+            "send_email": 10,
+            "deploy": 3
+          },
           "injectPromptBudgetHint": true,
           "maxPromptHintChars": 200,
           "failClosed": true,
@@ -158,6 +180,97 @@ To test without a live Cycles server:
           "maxTokensWhenLow": 1024,
           "retryOnDeny": false,
           "dryRun": false
+        }
+      }
+    }
+  }
+}
+```
+
+## Config Presets
+
+Common starting configurations for typical deployment scenarios.
+
+### Strict Enforcement
+
+For production agents handling real spend. Blocks on exhaustion, downgrades models, caps tool calls:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "my-org",
+          "failClosed": true,
+          "lowBudgetStrategies": ["downgrade_model", "disable_expensive_tools", "limit_remaining_calls"],
+          "modelFallbacks": {
+            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+          },
+          "modelBaseCosts": {
+            "claude-opus-4-20250514": 1500000,
+            "claude-sonnet-4-20250514": 300000,
+            "claude-haiku-4-5-20251001": 100000
+          },
+          "toolBaseCosts": {
+            "web_search": 500000,
+            "code_execution": 1000000
+          },
+          "toolCallLimits": {
+            "send_email": 10,
+            "deploy": 3
+          },
+          "maxRemainingCallsWhenLow": 5
+        }
+      }
+    }
+  }
+}
+```
+
+### Development / Testing
+
+Dry-run mode with generous budget. No Cycles server needed:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "dev",
+          "cyclesBaseUrl": "http://unused",
+          "cyclesApiKey": "unused",
+          "dryRun": true,
+          "dryRunBudget": 500000000,
+          "logLevel": "debug"
+        }
+      }
+    }
+  }
+}
+```
+
+### Cost-Conscious
+
+Aggressive cost savings. Low thresholds, model downgrade with token limits, expensive tools disabled early:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "my-org",
+          "lowBudgetThreshold": 5000000,
+          "exhaustedThreshold": 100000,
+          "lowBudgetStrategies": ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools"],
+          "maxTokensWhenLow": 512,
+          "expensiveToolThreshold": 200000,
+          "modelFallbacks": {
+            "claude-opus-4-20250514": "claude-haiku-4-5-20251001",
+            "gpt-4o": "gpt-4o-mini"
+          }
         }
       }
     }
@@ -210,6 +323,7 @@ To test without a live Cycles server:
 | `toolCurrencies` | object | — | Map: tool name → currency override |
 | `toolReservationTtls` | object | — | Map: tool name → TTL override in ms |
 | `toolOveragePolicies` | object | — | Map: tool name → overage policy override |
+| `toolCallLimits` | object | — | Map: tool name → max invocations per session (e.g. `{"send_email": 10}`) |
 
 ### Prompt Hints
 
@@ -373,6 +487,21 @@ Control which tools can be called using glob-style patterns:
 - Blocklist takes precedence over allowlist
 - Supports exact names and `*` wildcards (prefix: `code_*`, suffix: `*_tool`, all: `*`)
 
+### Tool Call Limits
+
+Cap the number of times a specific tool can be invoked per session. Useful for consequential actions like sending emails or triggering deployments:
+
+```json
+{
+  "toolCallLimits": {
+    "send_email": 10,
+    "deploy": 3
+  }
+}
+```
+
+Once a tool reaches its limit, further calls are blocked with a descriptive reason. Tools without a limit are unrestricted. Limits reset on each new agent session.
+
 ### Budget Transition Alerts
 
 Configure callbacks or webhooks to be notified when budget level changes:
@@ -401,8 +530,8 @@ The plugin exports two structured error types:
 import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw-budget-guard";
 ```
 
-- **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown when budget is exhausted and `failClosed=true`
-- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type for tool denials
+- **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown when budget is exhausted and `failClosed=true`. Includes `remaining`, `tenant`, and `budgetId` properties. The error message includes an actionable hint to increase budget via the Cycles API.
+- **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type for tool denials. Includes `toolName` property.
 
 ### Fail-Open Behavior
 
@@ -433,6 +562,16 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 **Model not being downgraded**
 - The exact model name must match a key in `modelFallbacks`
 - Check model costs in `modelBaseCosts` — fallback must be cheaper than remaining budget
+
+## Known Limitations
+
+| Limitation | Impact | Workaround |
+|---|---|---|
+| **Model cost is estimated, not actual.** OpenClaw has no `after_model_resolve` hook, so model costs are committed at the estimated amount. Actual token usage may differ. | Cost tracking for models is approximate. The plugin will never *overspend* — it may *under-track* slightly. | Buffer `modelBaseCosts` estimates 10–20% higher than expected. Use `costEstimator` for tools where accurate cost matters. |
+| **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
+| **No heartbeat for long-running tools.** Reservations expire after `reservationTtlMs` (default 60s). If a tool takes longer, the reservation is released while the tool is still running. | Cost is not tracked for tools that exceed their TTL. | Set per-tool TTL via `toolReservationTtls` for slow tools (e.g., `"code_execution": 300000`). |
+| **No retry on Cycles server rate limits.** If the Cycles server returns HTTP 429, the plugin treats it as a reservation failure (fail-open or synthetic DENY). | At high concurrency (100+ agents), rate limits could cause spurious denials. | Provision the Cycles server for expected load. |
+| **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
 
 ## Project Structure
 

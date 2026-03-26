@@ -77,6 +77,9 @@ export interface BudgetGuardConfig {
 
   // Phase 5 — Gap 18: Budget pools
   parentBudgetId?: string;
+
+  // Per-tool invocation limits per session
+  toolCallLimits?: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +161,8 @@ export interface SessionSummary {
   level: BudgetLevel;
   totalReservationsMade: number;
   costBreakdown: Record<string, { count: number; totalCost: number }>;
+  /** Per-tool invocation counts for the session. */
+  toolCallCounts: Record<string, number>;
   startedAt: number;
   endedAt: number;
 }
@@ -258,13 +263,23 @@ export interface HookContext {
 export class BudgetExhaustedError extends Error {
   public readonly code = "BUDGET_EXHAUSTED";
   public readonly remaining: number;
+  public readonly tenant?: string;
+  public readonly budgetId?: string;
 
-  constructor(remaining: number) {
+  constructor(remaining: number, opts?: { tenant?: string; budgetId?: string }) {
+    const scope = [
+      opts?.tenant ? `tenant=${opts.tenant}` : "",
+      opts?.budgetId ? `budget=${opts.budgetId}` : "",
+    ].filter(Boolean).join(", ");
     super(
-      `Budget exhausted (remaining: ${remaining}). Execution blocked by cycles-openclaw-budget-guard.`,
+      `Budget exhausted (remaining: ${remaining}${scope ? `, ${scope}` : ""}). ` +
+      `Execution blocked by cycles-openclaw-budget-guard. ` +
+      `To resume, increase the budget via the Cycles API or contact your admin.`,
     );
     this.name = "BudgetExhaustedError";
     this.remaining = remaining;
+    this.tenant = opts?.tenant;
+    this.budgetId = opts?.budgetId;
   }
 }
 

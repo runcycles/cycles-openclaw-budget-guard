@@ -74,6 +74,12 @@ let totalModelCalls = 0;
 /** Gap 13: Remaining calls counter for limit_remaining_calls strategy. */
 let remainingCallsAllowed = 0;
 
+/** Per-tool invocation counters for toolCallLimits enforcement. */
+const toolCallCounts = new Map<string, number>();
+
+/** Tools already warned about missing toolBaseCosts entry. */
+const warnedUnconfiguredTools = new Set<string>();
+
 /** Gap 15: Session start time. */
 let sessionStartedAt = 0;
 
@@ -81,8 +87,6 @@ let sessionStartedAt = 0;
 let resolvedUserId: string | undefined;
 let resolvedSessionId: string | undefined;
 
-// Monotonic counter for synthetic model reservation keys
-let modelReservationCounter = 0;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -112,6 +116,8 @@ export function initHooks(
   lastKnownLevel = undefined;
   activeReservations.clear();
   costBreakdown.clear();
+  toolCallCounts.clear();
+  warnedUnconfiguredTools.clear();
   totalToolCost = 0;
   totalToolCalls = 0;
   totalModelCost = 0;
@@ -120,7 +126,6 @@ export function initHooks(
   sessionStartedAt = Date.now();
   resolvedUserId = config.userId;
   resolvedSessionId = config.sessionId;
-  modelReservationCounter = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +266,7 @@ export async function beforeModelResolve(
     // Gap 13: Apply low-budget strategies
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
       if (config.failClosed) {
-        throw new BudgetExhaustedError(snapshot.remaining);
+        throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
     }
@@ -272,7 +277,7 @@ export async function beforeModelResolve(
       logger.warn(
         `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
       );
-      throw new BudgetExhaustedError(snapshot.remaining);
+      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
       `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
@@ -296,33 +301,18 @@ export async function beforeModelResolve(
       logger.warn(
         `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
       );
-      throw new BudgetExhaustedError(snapshot.remaining);
+      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
       `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
     );
   } else {
     totalReservationsMade++;
-    const reservationKey = result.reservationId
-      ? `model:${++modelReservationCounter}`
-      : undefined;
 
-    if (result.reservationId && reservationKey) {
-      activeReservations.set(reservationKey, {
-        reservationId: result.reservationId,
-        estimate: modelCost,
-        toolName: resolvedModel,
-        createdAt: Date.now(),
-        kind: "model",
-        currency: modelCurrency,
-      });
-
-      // Commit immediately (no after_model_resolve hook available)
-      try {
-        await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
-      } finally {
-        activeReservations.delete(reservationKey);
-      }
+    if (result.reservationId) {
+      // Commit immediately — no after_model_resolve hook exists in OpenClaw,
+      // so model cost is always estimated (not reconciled with actual tokens).
+      await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
     }
 
     // Gap 6 & 9: Track model cost
@@ -384,6 +374,10 @@ export async function beforeToolCall(
 ): Promise<ToolCallResult | undefined> {
   const toolName = event.toolName;
 
+  // Resolve user/session from ctx if available (consistent with beforeModelResolve)
+  if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
+  if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
+
   // Gap 7: Check tool allowlist/blocklist
   const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
   if (!permission.permitted) {
@@ -391,12 +385,35 @@ export async function beforeToolCall(
     return { block: true, blockReason: permission.reason };
   }
 
+  // Enforce per-tool invocation limits
+  if (config.toolCallLimits) {
+    const limit = config.toolCallLimits[toolName];
+    if (limit !== undefined) {
+      const count = toolCallCounts.get(toolName) ?? 0;
+      if (count >= limit) {
+        logger.warn(`Tool "${toolName}" blocked: call limit ${limit} reached (${count} calls)`);
+        return {
+          block: true,
+          blockReason: `Tool "${toolName}" exceeded session call limit (${limit})`,
+        };
+      }
+    }
+  }
+
   // Gap 12: Attach budget status
   const snapshot = await getSnapshot(ctx);
   attachBudgetStatus(ctx, snapshot);
 
-  // Gap 13: Disable expensive tools when budget is low
+  // Log once per tool when using default cost estimate
   const estimate = config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
+  if (!(toolName in config.toolBaseCosts) && !warnedUnconfiguredTools.has(toolName)) {
+    warnedUnconfiguredTools.add(toolName);
+    logger.info(
+      `Tool "${toolName}" has no entry in toolBaseCosts — using default estimate (${DEFAULT_TOOL_COST} ${config.currency}). Add it to toolBaseCosts for accurate budgeting.`,
+    );
+  }
+
+  // Gap 13: Disable expensive tools when budget is low
   if (
     snapshot.level === "low" &&
     config.lowBudgetStrategies.includes("disable_expensive_tools")
@@ -473,6 +490,7 @@ export async function beforeToolCall(
               currency: unit,
             });
           }
+          toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
           if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
             remainingCallsAllowed--;
           }
@@ -503,6 +521,9 @@ export async function beforeToolCall(
       currency: unit,
     });
   }
+
+  // Track per-tool invocation count for toolCallLimits
+  toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
 
   // Gap 13: Decrement remaining calls counter
   if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
@@ -594,6 +615,12 @@ export async function agentEnd(
   // Gap 9: Include forecast data
   const forecast = buildForecast();
 
+  // Build per-tool call counts as plain object
+  const callCounts: Record<string, number> = {};
+  for (const [key, value] of toolCallCounts) {
+    callCounts[key] = value;
+  }
+
   const summary: SessionSummary = {
     tenant: config.tenant,
     budgetId: config.budgetId,
@@ -606,6 +633,7 @@ export async function agentEnd(
     level: snapshot.level,
     totalReservationsMade,
     costBreakdown: breakdown,
+    toolCallCounts: callCounts,
     startedAt: sessionStartedAt,
     endedAt: Date.now(),
   };

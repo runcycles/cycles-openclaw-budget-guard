@@ -220,7 +220,7 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(infoCall).toContain("v0.3.4 starting");
+    expect(infoCall).toContain("v0.4.0 starting");
     expect(infoCall).toContain("tenant: test-tenant");
     expect(infoCall).toContain("cyclesApiKey: ****-key");
     expect(infoCall).toContain("budgetId: my-app");
@@ -260,5 +260,62 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     expect(mockInitHooks).toHaveBeenCalledWith(resolvedConfig, logger);
+  });
+
+  it("warns when downgrade_model strategy has no modelFallbacks", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      modelFallbacks: {},
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("no modelFallbacks configured"),
+    );
+  });
+
+  it("warns when disable_expensive_tools has no toolBaseCosts or threshold", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["disable_expensive_tools"],
+      toolBaseCosts: {},
+      expensiveToolThreshold: undefined,
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("no toolBaseCosts or expensiveToolThreshold configured"),
+    );
+  });
+
+  it("logs info when no toolBaseCosts configured", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: {},
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("No toolBaseCosts configured"),
+    );
+  });
+
+  it("includes toolCallLimits in startup summary", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { web_search: 100 },
+      toolCallLimits: { send_email: 10, deploy: 3 },
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(infoCall).toContain("toolCallLimits: send_email=10, deploy=3");
   });
 });

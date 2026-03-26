@@ -56,7 +56,7 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[cycles-budget-guard] v0.3.4 starting`,
+    `[cycles-budget-guard] v0.4.0 starting`,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,
@@ -74,7 +74,33 @@ export default function (api: OpenClawPluginApi): void {
     lines.push(`  toolBaseCosts: ${Object.keys(config.toolBaseCosts).join(", ")}`);
   if (config.toolAllowlist) lines.push(`  toolAllowlist: ${config.toolAllowlist.join(", ")}`);
   if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
+  if (config.toolCallLimits && Object.keys(config.toolCallLimits).length > 0)
+    lines.push(`  toolCallLimits: ${Object.entries(config.toolCallLimits).map(([k, v]) => `${k}=${v}`).join(", ")}`);
   api.logger.info(lines.join("\n"));
+
+  // Warn about common misconfigurations so operators catch issues early.
+  if (
+    config.lowBudgetStrategies.includes("downgrade_model") &&
+    Object.keys(config.modelFallbacks).length === 0
+  ) {
+    api.logger.warn(
+      "[cycles-budget-guard] Strategy 'downgrade_model' is enabled but no modelFallbacks configured — model downgrade will have no effect",
+    );
+  }
+  if (
+    config.lowBudgetStrategies.includes("disable_expensive_tools") &&
+    config.expensiveToolThreshold === undefined &&
+    Object.keys(config.toolBaseCosts).length === 0
+  ) {
+    api.logger.warn(
+      "[cycles-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
+    );
+  }
+  if (Object.keys(config.toolBaseCosts).length === 0) {
+    api.logger.info(
+      "[cycles-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
+    );
+  }
 
   initHooks(config, api.logger);
 
