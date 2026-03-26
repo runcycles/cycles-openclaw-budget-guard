@@ -33,6 +33,11 @@ export default function (api: OpenClawPluginApi): void {
   // OpenClaw wraps plugin config under a "config" key in the entry object.
   // Unwrap if present so resolveConfig sees the flat config values.
   const raw = api.config as Record<string, unknown>;
+
+  // Debug: log what OpenClaw passes so we can diagnose config issues.
+  api.logger.info(`[cycles-budget-guard] api.config keys: ${JSON.stringify(Object.keys(raw ?? {}))}`);
+  api.logger.info(`[cycles-budget-guard] api.config: ${JSON.stringify(raw)}`);
+
   const unwrapped = (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config))
     ? raw.config as Record<string, unknown>
     : raw;
