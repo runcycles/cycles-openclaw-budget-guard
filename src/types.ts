@@ -161,6 +161,8 @@ export interface SessionSummary {
   level: BudgetLevel;
   totalReservationsMade: number;
   costBreakdown: Record<string, { count: number; totalCost: number }>;
+  /** Per-tool invocation counts for the session. */
+  toolCallCounts: Record<string, number>;
   startedAt: number;
   endedAt: number;
 }

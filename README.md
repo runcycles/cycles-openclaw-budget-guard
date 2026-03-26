@@ -169,6 +169,97 @@ To test without a live Cycles server:
 }
 ```
 
+## Config Presets
+
+Common starting configurations for typical deployment scenarios.
+
+### Strict Enforcement
+
+For production agents handling real spend. Blocks on exhaustion, downgrades models, caps tool calls:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "my-org",
+          "failClosed": true,
+          "lowBudgetStrategies": ["downgrade_model", "disable_expensive_tools", "limit_remaining_calls"],
+          "modelFallbacks": {
+            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+          },
+          "modelBaseCosts": {
+            "claude-opus-4-20250514": 1500000,
+            "claude-sonnet-4-20250514": 300000,
+            "claude-haiku-4-5-20251001": 100000
+          },
+          "toolBaseCosts": {
+            "web_search": 500000,
+            "code_execution": 1000000
+          },
+          "toolCallLimits": {
+            "send_email": 10,
+            "deploy": 3
+          },
+          "maxRemainingCallsWhenLow": 5
+        }
+      }
+    }
+  }
+}
+```
+
+### Development / Testing
+
+Dry-run mode with generous budget. No Cycles server needed:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "dev",
+          "cyclesBaseUrl": "http://unused",
+          "cyclesApiKey": "unused",
+          "dryRun": true,
+          "dryRunBudget": 500000000,
+          "logLevel": "debug"
+        }
+      }
+    }
+  }
+}
+```
+
+### Cost-Conscious
+
+Aggressive cost savings. Low thresholds, model downgrade with token limits, expensive tools disabled early:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "tenant": "my-org",
+          "lowBudgetThreshold": 5000000,
+          "exhaustedThreshold": 100000,
+          "lowBudgetStrategies": ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools"],
+          "maxTokensWhenLow": 512,
+          "expensiveToolThreshold": 200000,
+          "modelFallbacks": {
+            "claude-opus-4-20250514": "claude-haiku-4-5-20251001",
+            "gpt-4o": "gpt-4o-mini"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ## Config Reference
 
 ### Core Settings

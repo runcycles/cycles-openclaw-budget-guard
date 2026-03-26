@@ -77,6 +77,9 @@ let remainingCallsAllowed = 0;
 /** Per-tool invocation counters for toolCallLimits enforcement. */
 const toolCallCounts = new Map<string, number>();
 
+/** Tools already warned about missing toolBaseCosts entry. */
+const warnedUnconfiguredTools = new Set<string>();
+
 /** Gap 15: Session start time. */
 let sessionStartedAt = 0;
 
@@ -114,6 +117,7 @@ export function initHooks(
   activeReservations.clear();
   costBreakdown.clear();
   toolCallCounts.clear();
+  warnedUnconfiguredTools.clear();
   totalToolCost = 0;
   totalToolCalls = 0;
   totalModelCost = 0;
@@ -400,8 +404,16 @@ export async function beforeToolCall(
   const snapshot = await getSnapshot(ctx);
   attachBudgetStatus(ctx, snapshot);
 
-  // Gap 13: Disable expensive tools when budget is low
+  // Log once per tool when using default cost estimate
   const estimate = config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
+  if (!(toolName in config.toolBaseCosts) && !warnedUnconfiguredTools.has(toolName)) {
+    warnedUnconfiguredTools.add(toolName);
+    logger.info(
+      `Tool "${toolName}" has no entry in toolBaseCosts — using default estimate (${DEFAULT_TOOL_COST} ${config.currency}). Add it to toolBaseCosts for accurate budgeting.`,
+    );
+  }
+
+  // Gap 13: Disable expensive tools when budget is low
   if (
     snapshot.level === "low" &&
     config.lowBudgetStrategies.includes("disable_expensive_tools")
@@ -603,6 +615,12 @@ export async function agentEnd(
   // Gap 9: Include forecast data
   const forecast = buildForecast();
 
+  // Build per-tool call counts as plain object
+  const callCounts: Record<string, number> = {};
+  for (const [key, value] of toolCallCounts) {
+    callCounts[key] = value;
+  }
+
   const summary: SessionSummary = {
     tenant: config.tenant,
     budgetId: config.budgetId,
@@ -615,6 +633,7 @@ export async function agentEnd(
     level: snapshot.level,
     totalReservationsMade,
     costBreakdown: breakdown,
+    toolCallCounts: callCounts,
     startedAt: sessionStartedAt,
     endedAt: Date.now(),
   };

@@ -1003,6 +1003,75 @@ describe("toolCallLimits", () => {
   });
 });
 
+describe("unconfigured tool cost warning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("logs info on first use of tool not in toolBaseCosts", async () => {
+    const { logger } = setup({ toolBaseCosts: {} });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c1" }, makeHookContext());
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Tool "unknown_tool" has no entry in toolBaseCosts'),
+    );
+  });
+
+  it("only warns once per tool", async () => {
+    const { logger } = setup({ toolBaseCosts: {} });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c1" }, makeHookContext());
+    await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c2" }, makeHookContext());
+
+    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => (c[0] as string).includes("unknown_tool"));
+    expect(infoCalls).toHaveLength(1);
+  });
+
+  it("does not warn for tools in toolBaseCosts", async () => {
+    const { logger } = setup({ toolBaseCosts: { web_search: 500000 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+
+    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => (c[0] as string).includes("no entry in toolBaseCosts"));
+    expect(infoCalls).toHaveLength(0);
+  });
+});
+
+describe("session summary includes toolCallCounts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("includes per-tool call counts in agentEnd summary", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c2" }, makeHookContext());
+    await beforeToolCall({ toolName: "code_exec", toolCallId: "c3" }, makeHookContext());
+
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata?.["cycles-budget-guard"] as Record<string, unknown>;
+    expect(summary).toBeDefined();
+    expect(summary.toolCallCounts).toEqual({ web_search: 2, code_exec: 1 });
+  });
+});
+
 describe("beforeToolCall resolves userId/sessionId from ctx", () => {
   beforeEach(() => {
     vi.clearAllMocks();
