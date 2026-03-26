@@ -434,6 +434,7 @@ async function commitPendingModelReservation(): Promise<void> {
 
   emitCounter("cycles.reservation.committed", 1, { kind: "model", name: modelName });
   emitHistogram("cycles.reservation.cost", actual, { kind: "model", name: modelName });
+  logEvent({ timestamp: Date.now(), hook: "commit_model", action: "commit", kind: "model", name: modelName, amount: actual, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
 
   invalidateSnapshotCache();
   if (config.aggressiveCacheInvalidation) {
@@ -487,6 +488,7 @@ export async function beforeModelResolve(
     // Gap 13: Apply low-budget strategies
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
       if (config.failClosed) {
+        logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
         throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
@@ -498,6 +500,7 @@ export async function beforeModelResolve(
       logger.warn(
         `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
       );
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
