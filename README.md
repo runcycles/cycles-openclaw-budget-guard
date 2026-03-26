@@ -420,6 +420,31 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 | `otlpMetricsEndpoint` | string | — | OTLP HTTP endpoint for auto metrics export (e.g. `http://localhost:4318/v1/metrics`) |
 | `otlpMetricsHeaders` | object | — | Custom HTTP headers for OTLP requests |
 
+### Resilience (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `heartbeatIntervalMs` | number | `30000` | Interval for auto-extending long-running tool reservations (ms). Set 0 to disable. |
+| `retryableStatusCodes` | number[] | `[429, 503, 504]` | HTTP status codes that trigger automatic retry with exponential backoff |
+| `transientRetryMaxAttempts` | number | `2` | Max retry attempts for transient Cycles server errors |
+| `transientRetryBaseDelayMs` | number | `500` | Base delay for exponential backoff on retries (ms) |
+
+### Anomaly Detection (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `burnRateWindowMs` | number | `60000` | Time window for burn rate anomaly detection (ms) |
+| `burnRateAlertThreshold` | number | `3.0` | Alert when current window burn rate exceeds this multiple of the previous window |
+| `onBurnRateAnomaly` | function | — | Callback `(event: BurnRateAnomalyEvent) => void` on burn rate spike |
+| `exhaustionWarningThresholdMs` | number | `120000` | Warn when estimated time-to-exhaustion drops below this (ms) |
+| `onExhaustionForecast` | function | — | Callback `(event: ExhaustionForecastEvent) => void` on exhaustion forecast |
+
+### Debugging (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enableEventLog` | boolean | `false` | Record every reserve/commit/deny/block decision in `sessionSummary.eventLog` |
+
 ## How It Works
 
 ### Budget Levels
@@ -584,8 +609,8 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 |---|---|---|
 | **Model cost is estimated by default.** OpenClaw has no `after_model_resolve` hook, so model costs are based on `modelBaseCosts` estimates. v0.5.0 adds a `modelCostEstimator` callback for reconciliation. | Cost tracking for models is approximate unless you provide a `modelCostEstimator`. The plugin will never *overspend* — it may *under-track* slightly. | Use `modelCostEstimator` to reconcile costs from a proxy/gateway. Or buffer `modelBaseCosts` estimates 10–20% higher than expected. |
 | **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
-| **No heartbeat for long-running tools.** Reservations expire after `reservationTtlMs` (default 60s). If a tool takes longer, the reservation is released while the tool is still running. | Cost is not tracked for tools that exceed their TTL. | Set per-tool TTL via `toolReservationTtls` for slow tools (e.g., `"code_execution": 300000`). |
-| **No retry on Cycles server rate limits.** If the Cycles server returns HTTP 429, the plugin treats it as a reservation failure (fail-open or synthetic DENY). | At high concurrency (100+ agents), rate limits could cause spurious denials. | Provision the Cycles server for expected load. |
+| **~~No heartbeat for long-running tools.~~** Fixed in v0.6.0. Reservations are now auto-extended every `heartbeatIntervalMs` (default 30s) while tools are running. | — | Configure `heartbeatIntervalMs` for your use case. Requires `extendReservation` support in the Cycles client. |
+| **~~No retry on Cycles server rate limits.~~** Fixed in v0.6.0. The plugin retries on 429/503/504 with exponential backoff (`transientRetryMaxAttempts`, default 2). | — | Configure `retryableStatusCodes` and `transientRetryBaseDelayMs` for your load profile. |
 | **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
 
 ## Project Structure

@@ -745,12 +745,14 @@ export async function beforeToolCall(
               kind: "tool",
               currency: unit,
             });
+            startHeartbeat(event.toolCallId, retry.reservationId);
           }
           toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
           if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
             remainingCallsAllowed--;
           }
           invalidateSnapshotCache();
+          logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "reserve", kind: "tool", name: toolName, amount: estimate, decision: retry.decision, reason: "retry_success", budgetLevel: snapshot.level, remaining: snapshot.remaining });
           return undefined;
         }
       }
