@@ -2515,36 +2515,90 @@ describe("v0.6.0 — predictive exhaustion warning", () => {
 // ---------------------------------------------------------------------------
 
 describe("v0.6.0 — reservation heartbeat", () => {
+  const mockExtendReservation = vi.fn().mockResolvedValue({});
+
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     mockCommitUsage.mockResolvedValue(undefined);
+    // Return a client with extendReservation so heartbeat can call it
+    mockCreateCyclesClient.mockReturnValue({ extendReservation: mockExtendReservation });
   });
 
-  it("starts heartbeat on tool reservation and stops on commit", async () => {
-    setup({ heartbeatIntervalMs: 10_000 });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("calls extendReservation after heartbeat interval fires", async () => {
+    setup({ heartbeatIntervalMs: 5_000, dryRun: false });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
     mockIsToolPermitted.mockReturnValue({ permitted: true });
-    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "hb-res-1", affectedScopes: [] });
 
     await beforeToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
-    // Heartbeat timer should be running (we can't directly observe it, but commit should stop it)
+
+    // Advance past the heartbeat interval to trigger the timer callback
+    await vi.advanceTimersByTimeAsync(5_500);
+
+    expect(mockExtendReservation).toHaveBeenCalledWith(
+      "hb-res-1",
+      expect.objectContaining({ extend_by_ms: 5_000 }),
+    );
+
+    // Stop heartbeat via afterToolCall
+    await afterToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
+
+    // After stop, advancing timers should NOT trigger another extend
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockExtendReservation).not.toHaveBeenCalled();
+  });
+
+  it("catches extendReservation errors without crashing", async () => {
+    mockExtendReservation.mockRejectedValue(new Error("extend failed"));
+    setup({ heartbeatIntervalMs: 5_000, dryRun: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "hb-err", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
+    // Should not throw when heartbeat fires and extendReservation rejects
+    await vi.advanceTimersByTimeAsync(5_500);
 
     await afterToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
-    // After commit, heartbeat should be stopped — no errors
+  });
+
+  it("does not start heartbeat when heartbeatIntervalMs is 0", async () => {
+    setup({ heartbeatIntervalMs: 0, dryRun: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "no-hb", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "fast_tool", toolCallId: "tc1" }, makeHookContext());
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mockExtendReservation).not.toHaveBeenCalled();
+    await afterToolCall({ toolName: "fast_tool", toolCallId: "tc1" }, makeHookContext());
   });
 
   it("cleans up all heartbeat timers at agentEnd", async () => {
-    setup({ heartbeatIntervalMs: 10_000 });
+    setup({ heartbeatIntervalMs: 5_000, dryRun: false });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
     mockIsToolPermitted.mockReturnValue({ permitted: true });
-    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "orphan-hb", affectedScopes: [] });
 
     await beforeToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
     // Don't call afterToolCall — orphaned reservation
 
     await agentEnd({}, makeHookContext());
-    // Should clean up without errors
+
+    // After agentEnd clears timers, no more extends should fire
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockExtendReservation).not.toHaveBeenCalled();
   });
 });
