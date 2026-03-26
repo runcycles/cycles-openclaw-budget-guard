@@ -195,7 +195,7 @@ The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is 
 | `after_tool_call` | 10 | `void` | PASS |
 | `agent_end` | 100 | `void` | PASS |
 
-### Config Schema Alignment (all 44 fields match across 3 sources)
+### Config Schema Alignment (all 60 fields match across 3 sources — v0.4.0 baseline shown below, v0.5.0/v0.6.0 additions documented in respective sections)
 
 **Core fields (original 16):**
 

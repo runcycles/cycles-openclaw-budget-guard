@@ -309,7 +309,7 @@ function sessionCostTotal(): number {
 function checkBurnRate(remaining: number): void {
   const now = Date.now();
   const elapsed = now - windowStartedAt;
-  if (elapsed < config.burnRateWindowMs) return;
+  if (elapsed < config.burnRateWindowMs || elapsed <= 0) return;
 
   const currentTotal = sessionCostTotal();
   const windowCost = currentTotal - windowCostAtStart;
@@ -350,6 +350,7 @@ function checkExhaustionForecast(remaining: number): void {
   if (totalCost <= 0) return;
 
   const burnRatePerMs = totalCost / elapsed;
+  if (burnRatePerMs <= 0) return;
   const msRemaining = remaining / burnRatePerMs;
 
   if (msRemaining < config.exhaustionWarningThresholdMs) {
