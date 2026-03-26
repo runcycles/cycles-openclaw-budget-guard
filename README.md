@@ -22,7 +22,17 @@ AI agents make autonomous decisions — calling models, invoking tools, retrying
 
 **Graceless failure.** When budget runs out, the agent crashes instead of adapting — switching to cheaper models, reducing output length, or disabling expensive tools.
 
-This plugin solves all five. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded, expensive tools are disabled, and the agent is told about its remaining budget so it can self-regulate. When budget is exhausted, execution stops. Side-effects are capped per tool. Spend is isolated per user, session, or team. And every session produces a cost breakdown so you know exactly what happened.
+This plugin solves all five — and goes further. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded, expensive tools are disabled, and the agent is told about its remaining budget so it can self-regulate. When budget is exhausted, execution stops. Side-effects are capped per tool. Spend is isolated per user, session, or team. And every session produces a cost breakdown so you know exactly what happened.
+
+Beyond enforcement, the plugin actively protects you from incidents:
+
+- **Burn rate anomaly detection** catches runaway tool loops before they exhaust your budget — if spending suddenly spikes 3x, you get a callback immediately.
+- **Predictive exhaustion warnings** tell you *when* budget will run out based on current burn rate, so you can fund the budget or wind down gracefully — not crash mid-session.
+- **Automatic retry with backoff** on transient Cycles server errors (429/503) prevents spurious denials during load spikes.
+- **Reservation heartbeat** keeps long-running tools tracked — no more silent cost loss when a tool exceeds the 60s TTL.
+- **Full observability** via MetricsEmitter (Datadog, Prometheus, Grafana, OTLP) and session event logs for debugging exactly what happened and why.
+
+Install, configure, done. No agent code changes required.
 
 > For deeper background, see [Why Rate Limits Are Not Enough](https://runcycles.io/concepts/why-rate-limits-are-not-enough-for-autonomous-systems) and [Runaway Agents and Tool Loops](https://runcycles.io/incidents/runaway-agents-tool-loops-and-budget-overruns-the-incidents-cycles-is-designed-to-prevent).
 
@@ -35,14 +45,18 @@ A comprehensive OpenClaw plugin that integrates with a live Cycles server to enf
 - **Block execution** when budget is exhausted (fail-closed by default)
 - **Inject budget hints** into prompts so the model is budget-aware
 - **Detect budget transitions** and fire callbacks/webhooks on level changes
-- **Control tool access** with allowlists and blocklists
+- **Control tool access** with allowlists, blocklists, and per-tool call limits
 - **Apply graceful degradation** strategies when budget is low
-- **Retry denied reservations** with configurable backoff
+- **Retry denied reservations** and transient server errors with configurable backoff
+- **Keep long-running tools alive** with automatic reservation heartbeat
+- **Detect anomalies** — burn rate spikes and predictive exhaustion warnings
+- **Emit metrics** to Datadog, Prometheus, Grafana, or any OTLP-compatible backend
+- **Record an event log** of every budget decision for debugging and compliance
+- **Report unconfigured tools** so you know which tools are using default cost estimates
 - **Support dry-run mode** for testing without a live Cycles server
-- **Track per-tool cost breakdowns** and session analytics
+- **Track per-tool cost breakdowns** and session analytics with model cost reconciliation
 - **Support multi-currency** budgets with per-tool/model overrides
 - **Support budget pools/hierarchies** via parent budget visibility
-- **Emit a budget summary** at the end of each agent session
 
 The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typescript) TypeScript client to communicate with a Cycles server.
 
