@@ -30,21 +30,14 @@ export type {
 } from "./types.js";
 
 export default function (api: OpenClawPluginApi): void {
-  // OpenClaw wraps plugin config under a "config" key in the entry object.
-  // Unwrap if present so resolveConfig sees the flat config values.
-  const raw = api.config as Record<string, unknown>;
-
-  // Debug: log what OpenClaw passes so we can diagnose config issues.
-  api.logger.info(`[cycles-budget-guard] api.config keys: ${JSON.stringify(Object.keys(raw ?? {}))}`);
-  api.logger.info(`[cycles-budget-guard] api.config: ${JSON.stringify(raw)}`);
-
-  const unwrapped = (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config))
-    ? raw.config as Record<string, unknown>
-    : raw;
+  // OpenClaw provides plugin-specific config on api.pluginConfig (from
+  // plugins.entries.<id>.config in openclaw.json). Fall back to api.config
+  // for older OpenClaw versions or direct invocation in tests.
+  const raw = (api.pluginConfig ?? api.config) as Record<string, unknown>;
 
   let config;
   try {
-    config = resolveConfig(unwrapped);
+    config = resolveConfig(raw);
   } catch (err) {
     // During plugin install, config may not be available yet.
     // Log and skip registration so install can complete.

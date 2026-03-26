@@ -135,7 +135,22 @@ describe("plugin entrypoint", () => {
     }
   });
 
-  it("calls resolveConfig with api.config when flat", () => {
+  it("uses api.pluginConfig when available", () => {
+    const pluginCfg = { tenant: "test", cyclesBaseUrl: "http://localhost:7878" };
+    mockResolveConfig.mockReturnValue(makeConfig());
+
+    const api = {
+      config: { some: "system-config" },
+      pluginConfig: pluginCfg,
+      logger: makeLogger(),
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    expect(mockResolveConfig).toHaveBeenCalledWith(pluginCfg);
+  });
+
+  it("falls back to api.config when pluginConfig is absent", () => {
     const rawConfig = { tenant: "test" };
     mockResolveConfig.mockReturnValue(makeConfig());
 
@@ -147,20 +162,6 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     expect(mockResolveConfig).toHaveBeenCalledWith(rawConfig);
-  });
-
-  it("unwraps config wrapper when OpenClaw nests under config key", () => {
-    const inner = { tenant: "test", cyclesBaseUrl: "http://localhost:7878" };
-    mockResolveConfig.mockReturnValue(makeConfig());
-
-    const api = {
-      config: { config: inner },
-      logger: makeLogger(),
-      on: vi.fn(),
-    };
-
-    registerPlugin(api);
-    expect(mockResolveConfig).toHaveBeenCalledWith(inner);
   });
 
   it("logs warning and skips registration when config is missing", () => {
