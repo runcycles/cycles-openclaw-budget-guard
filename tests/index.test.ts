@@ -163,6 +163,25 @@ describe("plugin entrypoint", () => {
     expect(mockResolveConfig).toHaveBeenCalledWith(inner);
   });
 
+  it("logs warning and skips registration when config is missing", () => {
+    mockResolveConfig.mockImplementation(() => {
+      throw new Error("[cycles-budget-guard] tenant is required in config");
+    });
+
+    const logger = makeLogger();
+    const api = {
+      config: {},
+      logger,
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping registration"),
+    );
+    expect(api.on).not.toHaveBeenCalled();
+  });
+
   it("calls initHooks with resolved config and api.logger", () => {
     const resolvedConfig = makeConfig();
     mockResolveConfig.mockReturnValue(resolvedConfig);
