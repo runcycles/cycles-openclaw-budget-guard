@@ -36,7 +36,17 @@ export default function (api: OpenClawPluginApi): void {
   const unwrapped = (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config))
     ? raw.config as Record<string, unknown>
     : raw;
-  const config = resolveConfig(unwrapped);
+
+  let config;
+  try {
+    config = resolveConfig(unwrapped);
+  } catch (err) {
+    // During plugin install, config may not be available yet.
+    // Log and skip registration so install can complete.
+    const msg = err instanceof Error ? err.message : String(err);
+    api.logger.warn(`[cycles-budget-guard] Skipping registration: ${msg}`);
+    return;
+  }
 
   if (!config.enabled) {
     return;
