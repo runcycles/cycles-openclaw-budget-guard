@@ -185,15 +185,13 @@ export async function reserveBudget(
     overage_policy: opts.overagePolicy ?? config.overagePolicy,
   };
 
-  let response;
-  let lastError: unknown;
+  let response: { isSuccess: boolean; status: number; body?: unknown; errorMessage?: string } | undefined;
   const maxAttempts = 1 + config.transientRetryMaxAttempts;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       response = await client.createReservation(body);
-    } catch (err) {
-      lastError = err;
+    } catch {
       // Network-level error — retry if attempts remain, otherwise DENY
       if (attempt < maxAttempts - 1) {
         await sleepMs(config.transientRetryBaseDelayMs * Math.pow(2, attempt));
@@ -218,7 +216,7 @@ export async function reserveBudget(
     return {
       decision: "DENY" as ReservationCreateResponse["decision"],
       affectedScopes: [],
-      reasonCode: (response as { errorMessage?: string })?.errorMessage ?? "reservation_failed",
+      reasonCode: response?.errorMessage ?? "reservation_failed",
     };
   }
 

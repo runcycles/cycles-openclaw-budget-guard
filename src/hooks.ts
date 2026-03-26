@@ -289,9 +289,13 @@ function emitHistogram(name: string, value: number, tags?: Record<string, string
   try { metricsEmitter.histogram(name, value, { ...baseTags, ...tags }); } catch { /* best-effort */ }
 }
 
-/** v0.6.0: Append to event log if enabled. */
+const MAX_EVENT_LOG_ENTRIES = 10_000;
+
+/** v0.6.0: Append to event log if enabled. Capped to prevent unbounded growth. */
 function logEvent(entry: ReservationLogEntry): void {
-  if (config.enableEventLog) eventLog.push(entry);
+  if (!config.enableEventLog) return;
+  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) eventLog.shift();
+  eventLog.push(entry);
 }
 
 /** v0.6.0: Get current session cost total. */
@@ -624,6 +628,7 @@ export async function beforeToolCall(
   if (!permission.permitted) {
     logger.warn(`Tool "${toolName}" blocked by access list: ${permission.reason}`);
     emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "access_list" });
+    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: permission.reason, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
     return { block: true, blockReason: permission.reason };
   }
 
@@ -635,6 +640,7 @@ export async function beforeToolCall(
       if (count >= limit) {
         logger.warn(`Tool "${toolName}" blocked: call limit ${limit} reached (${count} calls)`);
         emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "call_limit" });
+        logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: `call_limit:${limit}`, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
         return {
           block: true,
           blockReason: `Tool "${toolName}" exceeded session call limit (${limit})`,
@@ -667,6 +673,7 @@ export async function beforeToolCall(
         `Tool "${toolName}" blocked: cost ${estimate} exceeds expensive threshold ${threshold}`,
       );
       emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "expensive" });
+      logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "expensive", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       return {
         block: true,
         blockReason: `Tool "${toolName}" disabled during low budget (cost ${estimate} exceeds threshold ${threshold})`,
@@ -682,6 +689,7 @@ export async function beforeToolCall(
   ) {
     logger.warn(`Tool "${toolName}" blocked: remaining call limit reached`);
     emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "remaining_calls" });
+    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
     return {
       block: true,
       blockReason: `Tool call limit reached during low budget (max ${config.maxRemainingCallsWhenLow} calls)`,
@@ -749,6 +757,7 @@ export async function beforeToolCall(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
     emitCounter("cycles.reservation.denied", 1, { kind: "tool", name: toolName, reason: result.reasonCode ?? "denied" });
+    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "deny", kind: "tool", name: toolName, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
     return {
       block: true,
       blockReason: `Budget reservation denied for tool "${toolName}": ${result.reasonCode ?? "budget limit reached"}`,
@@ -871,7 +880,11 @@ export async function agentEnd(
     logger.warn(
       `agent_end: releasing ${activeReservations.size} orphaned reservation(s)`,
     );
-    const releases = [...activeReservations.values()].map((r) =>
+    const orphaned = [...activeReservations.values()];
+    for (const r of orphaned) {
+      logEvent({ timestamp: Date.now(), hook: "agent_end", action: "release", kind: r.kind, name: r.toolName, amount: r.estimate, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+    }
+    const releases = orphaned.map((r) =>
       releaseReservation(client, r.reservationId, "agent_end_cleanup", logger),
     );
     await Promise.allSettled(releases);
