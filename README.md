@@ -563,6 +563,16 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - The exact model name must match a key in `modelFallbacks`
 - Check model costs in `modelBaseCosts` — fallback must be cheaper than remaining budget
 
+## Known Limitations
+
+| Limitation | Impact | Workaround |
+|---|---|---|
+| **Model cost is estimated, not actual.** OpenClaw has no `after_model_resolve` hook, so model costs are committed at the estimated amount. Actual token usage may differ. | Cost tracking for models is approximate. The plugin will never *overspend* — it may *under-track* slightly. | Buffer `modelBaseCosts` estimates 10–20% higher than expected. Use `costEstimator` for tools where accurate cost matters. |
+| **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
+| **No heartbeat for long-running tools.** Reservations expire after `reservationTtlMs` (default 60s). If a tool takes longer, the reservation is released while the tool is still running. | Cost is not tracked for tools that exceed their TTL. | Set per-tool TTL via `toolReservationTtls` for slow tools (e.g., `"code_execution": 300000`). |
+| **No retry on Cycles server rate limits.** If the Cycles server returns HTTP 429, the plugin treats it as a reservation failure (fail-open or synthetic DENY). | At high concurrency (100+ agents), rate limits could cause spurious denials. | Provision the Cycles server for expected load. |
+| **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
+
 ## Project Structure
 
 ```
