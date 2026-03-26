@@ -10,13 +10,19 @@ OpenClaw plugin for budget-aware model and tool execution using [Cycles](https:/
 
 ## Why use this plugin?
 
-AI agents make autonomous decisions that cost money. A single runaway agent — stuck in a tool loop, retrying failed calls, or choosing expensive models — can burn through hundreds of dollars in minutes with no human in the loop.
+AI agents make autonomous decisions — calling models, invoking tools, retrying on failure — with no human in the loop. Without runtime enforcement, several things go wrong:
 
-Without hard enforcement, there's nothing to stop it. Provider spending caps are account-wide and too coarse. Rate limits don't account for cost. In-app token counters don't survive restarts and don't work across concurrent agents.
+**Runaway spend.** A single agent stuck in a tool loop or retrying failed calls can burn through hundreds of dollars in minutes. Provider spending caps are account-wide and too coarse. Rate limits don't account for cost. In-app counters don't survive restarts or coordinate across concurrent agents.
 
-This plugin adds **runtime budget authority** at the OpenClaw hook level. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded to cheaper alternatives. When budget is exhausted, execution stops. No exceptions, no drift.
+**Uncontrolled side-effects.** An agent can send 100 emails, trigger 50 deployments, or call dangerous APIs with nothing to stop it. Cost limits alone don't help — some actions are consequential regardless of price.
 
-**Who it's for:** Teams running OpenClaw agents in production, multi-tenant platforms billing per customer, and anyone who needs hard spend caps per user, session, or team.
+**Noisy neighbors.** In multi-tenant or multi-user setups, one agent can consume the entire team or tenant budget, starving other users. Without per-user scoping, there's no isolation.
+
+**No visibility.** When an agent session ends, you have no idea what it spent, which tools it called most, or whether it was cost-efficient. Debugging cost overruns after the fact is painful.
+
+**Graceless failure.** When budget runs out, the agent crashes instead of adapting — switching to cheaper models, reducing output length, or disabling expensive tools.
+
+This plugin solves all five. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded, expensive tools are disabled, and the agent is told about its remaining budget so it can self-regulate. When budget is exhausted, execution stops. Side-effects are capped per tool. Spend is isolated per user, session, or team. And every session produces a cost breakdown so you know exactly what happened.
 
 > For deeper background, see [Why Rate Limits Are Not Enough](https://runcycles.io/concepts/why-rate-limits-are-not-enough-for-autonomous-systems) and [Runaway Agents and Tool Loops](https://runcycles.io/incidents/runaway-agents-tool-loops-and-budget-overruns-the-incidents-cycles-is-designed-to-prevent).
 
