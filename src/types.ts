@@ -80,6 +80,39 @@ export interface BudgetGuardConfig {
 
   // Per-tool invocation limits per session
   toolCallLimits?: Record<string, number>;
+
+  // v0.5.0 — Model cost reconciliation
+  modelCostEstimator?: (context: ModelCostEstimatorContext) => number | undefined;
+
+  // v0.5.0 — Metrics emitter for observability pipelines
+  metricsEmitter?: MetricsEmitter;
+
+  // v0.5.0 — Aggressive cache invalidation (refetch after every mutation)
+  aggressiveCacheInvalidation: boolean;
+
+  // v0.5.0 — OTLP metrics endpoint (auto-creates emitter if metricsEmitter not set)
+  otlpMetricsEndpoint?: string;
+  otlpMetricsHeaders?: Record<string, string>;
+
+  // v0.6.0 — Reservation heartbeat for long-running tools
+  heartbeatIntervalMs: number;
+
+  // v0.6.0 — Retryable error handling
+  retryableStatusCodes: number[];
+  transientRetryMaxAttempts: number;
+  transientRetryBaseDelayMs: number;
+
+  // v0.6.0 — Burn rate anomaly detection
+  burnRateWindowMs: number;
+  burnRateAlertThreshold: number;
+  onBurnRateAnomaly?: (event: BurnRateAnomalyEvent) => void;
+
+  // v0.6.0 — Session event log
+  enableEventLog: boolean;
+
+  // v0.6.0 — Predictive exhaustion warning
+  exhaustionWarningThresholdMs: number;
+  onExhaustionForecast?: (event: ExhaustionForecastEvent) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +157,38 @@ export interface CostEstimatorContext {
 }
 
 // ---------------------------------------------------------------------------
+// Model cost estimator context (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface ModelCostEstimatorContext {
+  model: string;
+  estimatedCost: number;
+  turnIndex: number;
+}
+
+// ---------------------------------------------------------------------------
+// StandardMetrics for Cycles commit payloads (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface StandardMetrics {
+  tokens_input?: number;
+  tokens_output?: number;
+  latency_ms?: number;
+  model_version?: string;
+  custom?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// MetricsEmitter for observability pipelines (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface MetricsEmitter {
+  gauge(name: string, value: number, tags?: Record<string, string>): void;
+  counter(name: string, delta: number, tags?: Record<string, string>): void;
+  histogram(name: string, value: number, tags?: Record<string, string>): void;
+}
+
+// ---------------------------------------------------------------------------
 // Budget transition event (Gap 5)
 // ---------------------------------------------------------------------------
 
@@ -165,6 +230,51 @@ export interface SessionSummary {
   toolCallCounts: Record<string, number>;
   startedAt: number;
   endedAt: number;
+  // v0.6.0
+  unconfiguredTools?: Array<{ name: string; callCount: number; estimatedTotalCost: number }>;
+  eventLog?: ReservationLogEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Reservation event log (v0.6.0)
+// ---------------------------------------------------------------------------
+
+export interface ReservationLogEntry {
+  timestamp: number;
+  hook: string;
+  action: "reserve" | "commit" | "release" | "deny" | "block";
+  kind: "model" | "tool";
+  name: string;
+  amount?: number;
+  decision?: string;
+  reason?: string;
+  budgetLevel: BudgetLevel;
+  remaining: number;
+}
+
+// ---------------------------------------------------------------------------
+// Burn rate anomaly event (v0.6.0)
+// ---------------------------------------------------------------------------
+
+export interface BurnRateAnomalyEvent {
+  currentBurnRate: number;
+  averageBurnRate: number;
+  ratio: number;
+  threshold: number;
+  windowMs: number;
+  remaining: number;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Exhaustion forecast event (v0.6.0)
+// ---------------------------------------------------------------------------
+
+export interface ExhaustionForecastEvent {
+  estimatedMsRemaining: number;
+  burnRatePerMs: number;
+  remaining: number;
+  timestamp: number;
 }
 
 // ---------------------------------------------------------------------------

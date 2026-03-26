@@ -77,6 +77,23 @@ export function makeConfig(
     parentBudgetId: undefined,
     // Tool call limits
     toolCallLimits: undefined,
+    // v0.5.0
+    modelCostEstimator: undefined,
+    metricsEmitter: undefined,
+    aggressiveCacheInvalidation: true,
+    otlpMetricsEndpoint: undefined,
+    otlpMetricsHeaders: undefined,
+    // v0.6.0
+    heartbeatIntervalMs: 30_000,
+    retryableStatusCodes: [429, 503, 504],
+    transientRetryMaxAttempts: 2,
+    transientRetryBaseDelayMs: 500,
+    burnRateWindowMs: 60_000,
+    burnRateAlertThreshold: 3.0,
+    onBurnRateAnomaly: undefined,
+    enableEventLog: false,
+    exhaustionWarningThresholdMs: 120_000,
+    onExhaustionForecast: undefined,
     ...overrides,
   };
 }

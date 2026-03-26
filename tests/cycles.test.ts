@@ -568,6 +568,73 @@ describe("reserveBudget", () => {
     expect(result.decision).toBe("DENY");
     expect(result.reasonCode).toBe("reservation_network_error");
   });
+
+  it("retries on 429 status and succeeds on second attempt", async () => {
+    const retryConfig = makeConfig({
+      retryableStatusCodes: [429],
+      transientRetryMaxAttempts: 2,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation
+      .mockResolvedValueOnce({ isSuccess: false, status: 429, errorMessage: "rate_limited" })
+      .mockResolvedValueOnce({
+        isSuccess: true,
+        status: 200,
+        body: { decision: "ALLOW", reservation_id: "r-retry", affected_scopes: [] },
+      });
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("ALLOW");
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns DENY after exhausting retry attempts on 503", async () => {
+    const retryConfig = makeConfig({
+      retryableStatusCodes: [503],
+      transientRetryMaxAttempts: 1,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: false, status: 503, errorMessage: "service_unavailable",
+    });
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    // 1 initial + 1 retry = 2 attempts
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on network error and returns DENY if all attempts fail", async () => {
+    const retryConfig = makeConfig({
+      transientRetryMaxAttempts: 1,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation.mockRejectedValue(new Error("network error"));
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    expect(result.reasonCode).toBe("reservation_network_error");
+    // 1 initial + 1 retry = 2 attempts
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("commitUsage", () => {
@@ -613,6 +680,43 @@ describe("commitUsage", () => {
       commitUsage(client, "res-1", 500_000, "USD_MICROCENTS", logger),
     ).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("includes StandardMetrics in commit body when provided", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-metrics", 500_000, "USD_MICROCENTS", logger, {
+      model_version: "gpt-4o",
+      tokens_input: 1200,
+      tokens_output: 800,
+      latency_ms: 2500,
+    });
+    expect(mockCommitReservation).toHaveBeenCalledWith("res-metrics", {
+      idempotency_key: "test-uuid-1234",
+      actual: { unit: "USD_MICROCENTS", amount: 500_000 },
+      metrics: {
+        model_version: "gpt-4o",
+        tokens_input: 1200,
+        tokens_output: 800,
+        latency_ms: 2500,
+      },
+    });
+  });
+
+  it("omits metrics from commit body when not provided", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-no-metrics", 500_000, "USD_MICROCENTS", logger);
+    const callBody = mockCommitReservation.mock.calls[0][1] as Record<string, unknown>;
+    expect(callBody).not.toHaveProperty("metrics");
   });
 });
 

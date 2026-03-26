@@ -18,11 +18,21 @@ AI agents make autonomous decisions — calling models, invoking tools, retrying
 
 **Noisy neighbors.** In multi-tenant or multi-user setups, one agent can consume the entire team or tenant budget, starving other users. Without per-user scoping, there's no isolation.
 
-**No visibility.** When an agent session ends, you have no idea what it spent, which tools it called most, or whether it was cost-efficient. Debugging cost overruns after the fact is painful.
+**No session-level cost visibility.** When an agent session ends, you have no idea what it spent, which tools it called most, or whether it was cost-efficient. Debugging cost overruns after the fact is painful.
 
-**Graceless failure.** When budget runs out, the agent crashes instead of adapting — switching to cheaper models, reducing output length, or disabling expensive tools.
+**Abrupt failure.** When budget runs out, the agent crashes instead of adapting — switching to cheaper models, reducing output length, or disabling expensive tools.
 
-This plugin solves all five. Every model call and tool invocation is budget-checked *before* execution. When budget runs low, models are automatically downgraded, expensive tools are disabled, and the agent is told about its remaining budget so it can self-regulate. When budget is exhausted, execution stops. Side-effects are capped per tool. Spend is isolated per user, session, or team. And every session produces a cost breakdown so you know exactly what happened.
+This plugin addresses those failure modes by checking model and tool execution before it runs, then degrading or blocking when budget conditions require it. It also tracks session-level cost breakdowns, tool usage, and budget transitions for debugging and operations.
+
+Beyond enforcement, the plugin monitors for problems as they develop:
+
+- **Burn rate anomaly detection** catches runaway tool loops — if spending spikes 3x above the session average, `onBurnRateAnomaly` fires immediately
+- **Predictive exhaustion warnings** estimate when budget will run out and fire `onExhaustionForecast` before it happens
+- **Automatic retry with backoff** on transient Cycles server errors (429/503) prevents spurious denials under load
+- **Reservation heartbeat** auto-extends long-running tool reservations so cost tracking doesn't silently break
+- **Observability** via `metricsEmitter` (Datadog, Prometheus, Grafana, OTLP) and opt-in session event logs
+
+In typical OpenClaw setups, you can add enforcement without changing agent logic.
 
 > For deeper background, see [Why Rate Limits Are Not Enough](https://runcycles.io/concepts/why-rate-limits-are-not-enough-for-autonomous-systems) and [Runaway Agents and Tool Loops](https://runcycles.io/incidents/runaway-agents-tool-loops-and-budget-overruns-the-incidents-cycles-is-designed-to-prevent).
 
@@ -35,16 +45,22 @@ A comprehensive OpenClaw plugin that integrates with a live Cycles server to enf
 - **Block execution** when budget is exhausted (fail-closed by default)
 - **Inject budget hints** into prompts so the model is budget-aware
 - **Detect budget transitions** and fire callbacks/webhooks on level changes
-- **Control tool access** with allowlists and blocklists
+- **Control tool access** with allowlists, blocklists, and per-tool call limits
 - **Apply graceful degradation** strategies when budget is low
-- **Retry denied reservations** with configurable backoff
+- **Retry denied reservations** and transient server errors with configurable backoff
+- **Keep long-running tools alive** with automatic reservation heartbeat
+- **Detect anomalies** — burn rate spikes and predictive exhaustion warnings
+- **Emit metrics** to Datadog, Prometheus, Grafana, or any OTLP-compatible backend
+- **Record an event log** of every budget decision for debugging and compliance
+- **Report unconfigured tools** so you know which tools are using default cost estimates
 - **Support dry-run mode** for testing without a live Cycles server
-- **Track per-tool cost breakdowns** and session analytics
+- **Track per-tool cost breakdowns** and session analytics with model cost reconciliation
 - **Support multi-currency** budgets with per-tool/model overrides
 - **Support budget pools/hierarchies** via parent budget visibility
-- **Emit a budget summary** at the end of each agent session
 
 The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typescript) TypeScript client to communicate with a Cycles server.
+
+> **Important:** Budget exhaustion is enforced fail-closed by default, but Cycles server connectivity failures are handled fail-open — the plugin assumes healthy budget and allows execution to continue. See [Fail-Open Behavior](#fail-open-behavior) for details.
 
 ## Prerequisites
 
@@ -57,9 +73,7 @@ The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typ
 
 If you don't have a Cycles server yet, see the [Cycles quickstart](https://github.com/runcycles) to set one up. Alternatively, use **dry-run mode** to test without a server.
 
->To see budget enforcement in action before wiring up your own agent, run the 
-[Cycles Runaway Demo](https://github.com/runcycles/cycles-runaway-demo) — 
-it shows the exact failure mode this plugin prevents, with a live before/after comparison.
+> To see budget enforcement in action before wiring up your own agent, run the [Cycles Runaway Demo](https://github.com/runcycles/cycles-runaway-demo) — it shows the exact failure mode this plugin prevents, with a live before/after comparison.
 
 ## Quick Start
 
@@ -135,6 +149,46 @@ To test without a live Cycles server:
   }
 }
 ```
+
+### 6. Verify it's working
+
+After restarting OpenClaw, check the logs for:
+
+```
+[cycles-budget-guard] v0.6.0 starting
+  tenant: my-org
+  cyclesBaseUrl: http://localhost:7878
+  ...
+```
+
+Run your agent and look for budget activity:
+
+```
+[cycles-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
+```
+
+If you see this, the plugin is actively checking budget on every model and tool call.
+
+## Understanding the cost model
+
+The plugin uses a simple model: every model call and tool call reserves a fixed cost from the budget.
+
+**Currency.** The default is `USD_MICROCENTS` — 1 unit = $0.00001 (one hundred-thousandth of a dollar). So:
+
+| Amount (units) | USD equivalent |
+|----------------|---------------|
+| 100,000 | $0.001 (0.1 cents) |
+| 1,000,000 | $0.01 (1 cent) |
+| 10,000,000 | $0.10 (10 cents) |
+| 100,000,000 | $1.00 |
+
+**Example.** With a $5 budget (500,000,000 units):
+- `claude-opus` at 1,500,000/call = ~333 calls before exhaustion
+- `claude-sonnet` at 300,000/call = ~1,666 calls
+- `web_search` at 500,000/call = ~1,000 calls
+- `lowBudgetThreshold: 10000000` triggers model downgrade when $0.10 remains
+
+**Setting toolBaseCosts.** Start with the default (100,000 units per call). After your first session, check the `unconfiguredTools` list in the session summary — it tells you which tools need explicit costs. For tools that call external APIs, estimate higher (500K-1M). For lightweight tools, estimate lower (10K-50K).
 
 ## Full Configuration Example
 
@@ -278,6 +332,44 @@ Aggressive cost savings. Low thresholds, model downgrade with token limits, expe
 }
 ```
 
+## Configure for your use case
+
+Most users only need 5-10 config properties. Start with what you need:
+
+**I just want to stop runaway agents** (3 required fields only):
+```json
+{ "tenant": "my-org", "cyclesBaseUrl": "...", "cyclesApiKey": "..." }
+```
+The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block agents that exhaust their budget and warn when it gets low.
+
+**I want cost-aware model selection** — add:
+```json
+{
+  "modelFallbacks": { "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] },
+  "modelBaseCosts": { "claude-opus-4-20250514": 1500000, "claude-sonnet-4-20250514": 300000, "claude-haiku-4-5-20251001": 100000 }
+}
+```
+
+**I want to cap dangerous tool calls** — add:
+```json
+{ "toolCallLimits": { "send_email": 10, "deploy": 3, "delete_data": 1 } }
+```
+
+**I want observability** — add:
+```json
+{ "otlpMetricsEndpoint": "http://localhost:4318/v1/metrics" }
+```
+
+**I want to catch runaway loops** — add:
+```json
+{ "burnRateAlertThreshold": 3.0, "onBurnRateAnomaly": "..." }
+```
+
+**I want full debugging** — add:
+```json
+{ "enableEventLog": true, "logLevel": "debug" }
+```
+
 ## Config Reference
 
 ### Core Settings
@@ -405,6 +497,46 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|------|---------|-------------|
 | `parentBudgetId` | string | — | Parent budget ID — when set, pool balance is included in hints |
 
+### Model Cost Reconciliation (v0.5.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `modelCostEstimator` | function | — | Callback `(ctx: { model, estimatedCost, turnIndex }) => number | undefined` to reconcile model cost at commit time |
+
+### Observability (v0.5.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metricsEmitter` | object | — | Object with `gauge`/`counter`/`histogram` methods for observability pipeline integration |
+| `aggressiveCacheInvalidation` | boolean | `true` | Proactively refetch budget snapshot after every commit/release for fresher data |
+| `otlpMetricsEndpoint` | string | — | OTLP HTTP endpoint for auto metrics export (e.g. `http://localhost:4318/v1/metrics`) |
+| `otlpMetricsHeaders` | object | — | Custom HTTP headers for OTLP requests |
+
+### Resilience (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `heartbeatIntervalMs` | number | `30000` | Interval for auto-extending long-running tool reservations (ms). Set 0 to disable. |
+| `retryableStatusCodes` | number[] | `[429, 503, 504]` | HTTP status codes that trigger automatic retry with exponential backoff |
+| `transientRetryMaxAttempts` | number | `2` | Max retry attempts for transient Cycles server errors |
+| `transientRetryBaseDelayMs` | number | `500` | Base delay for exponential backoff on retries (ms) |
+
+### Anomaly Detection (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `burnRateWindowMs` | number | `60000` | Time window for burn rate anomaly detection (ms) |
+| `burnRateAlertThreshold` | number | `3.0` | Alert when current window burn rate exceeds this multiple of the previous window |
+| `onBurnRateAnomaly` | function | — | Callback `(event: BurnRateAnomalyEvent) => void` on burn rate spike |
+| `exhaustionWarningThresholdMs` | number | `120000` | Warn when estimated time-to-exhaustion drops below this (ms) |
+| `onExhaustionForecast` | function | — | Callback `(event: ExhaustionForecastEvent) => void` on exhaustion forecast |
+
+### Debugging (v0.6.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enableEventLog` | boolean | `false` | Record every reserve/commit/deny/block decision in `sessionSummary.eventLog` |
+
 ## How It Works
 
 ### Budget Levels
@@ -417,7 +549,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 
 ### Hook: `before_model_resolve`
 
-Fetches budget state, reserves budget for the model call, and commits immediately (since there's no `after_model_resolve` hook). When budget is low:
+Fetches budget state and reserves budget for the model call. The reservation is held open and committed later (in `before_prompt_build` or at `agent_end`), allowing the optional `modelCostEstimator` callback to reconcile estimated vs actual costs. When budget is low:
 - Applies model fallbacks (including chained fallbacks like `opus → [sonnet, haiku]`)
 - Enforces `limit_remaining_calls` if configured
 - Attaches budget status metadata to `ctx.metadata["cycles-budget-guard-status"]`
@@ -426,7 +558,7 @@ When budget is exhausted and `failClosed=true`, throws `BudgetExhaustedError`.
 
 ### Hook: `before_prompt_build`
 
-When `injectPromptBudgetHint` is enabled, injects a system context hint with:
+Commits any pending model reservation from the previous turn (with `modelCostEstimator` reconciliation if configured). When `injectPromptBudgetHint` is enabled, injects a system context hint with:
 - Current remaining balance and percentage
 - Budget level warnings
 - Forecast projections (estimated remaining tool/model calls based on average costs)
@@ -563,114 +695,31 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - The exact model name must match a key in `modelFallbacks`
 - Check model costs in `modelBaseCosts` — fallback must be cheaper than remaining budget
 
+## Production checklist
+
+Before deploying to production:
+
+- [ ] API key stored as env var (`CYCLES_API_KEY`), not in config file
+- [ ] `failClosed: true` (default — blocks on exhausted budget)
+- [ ] `dryRun: false` (default — uses real Cycles server)
+- [ ] `modelBaseCosts` set for each model your agent uses
+- [ ] `toolBaseCosts` set for at least your top 5 tools by usage
+- [ ] `toolCallLimits` set for dangerous tools (`send_email`, `deploy`, etc.)
+- [ ] `lowBudgetThreshold` calibrated for your session duration (default 10M = $0.10)
+- [ ] Budget transition monitoring via `onBudgetTransition` callback or `budgetTransitionWebhookUrl`
+- [ ] Session analytics via `onSessionEnd` callback or `analyticsWebhookUrl`
+- [ ] Run one test session with `logLevel: "debug"` and `enableEventLog: true` to verify costs
+
 ## Known Limitations
 
 | Limitation | Impact | Workaround |
 |---|---|---|
-| **Model cost is estimated, not actual.** OpenClaw has no `after_model_resolve` hook, so model costs are committed at the estimated amount. Actual token usage may differ. | Cost tracking for models is approximate. The plugin will never *overspend* — it may *under-track* slightly. | Buffer `modelBaseCosts` estimates 10–20% higher than expected. Use `costEstimator` for tools where accurate cost matters. |
+| **Model cost is estimated by default.** OpenClaw has no `after_model_resolve` hook, so model costs are based on `modelBaseCosts` estimates. The `modelCostEstimator` callback can reconcile costs if you have a proxy or gateway with token counts. | Cost tracking for models is approximate unless you provide a `modelCostEstimator`. The plugin will never *overspend* — it may *under-track* slightly. | Use `modelCostEstimator` to reconcile costs. Or buffer `modelBaseCosts` estimates 10–20% higher than expected. |
 | **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
-| **No heartbeat for long-running tools.** Reservations expire after `reservationTtlMs` (default 60s). If a tool takes longer, the reservation is released while the tool is still running. | Cost is not tracked for tools that exceed their TTL. | Set per-tool TTL via `toolReservationTtls` for slow tools (e.g., `"code_execution": 300000`). |
-| **No retry on Cycles server rate limits.** If the Cycles server returns HTTP 429, the plugin treats it as a reservation failure (fail-open or synthetic DENY). | At high concurrency (100+ agents), rate limits could cause spurious denials. | Provision the Cycles server for expected load. |
 | **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
+| **Heartbeat requires client support.** Reservation auto-extension (`heartbeatIntervalMs`) calls `client.extendReservation()`. If the Cycles client does not implement this method, heartbeats are silently skipped. | Long-running tools may still lose cost tracking if the client lacks `extendReservation`. | Use per-tool TTL overrides via `toolReservationTtls` as fallback. |
 
-## Project Structure
-
-```
-cycles-openclaw-budget-guard/
-├── openclaw.plugin.json         # Plugin manifest with configSchema and extensions
-├── package.json                 # npm package with openclaw.extensions
-├── tsconfig.json                # TypeScript configuration
-├── tsup.config.ts               # Build configuration (ESM output)
-├── vitest.config.ts             # Test runner configuration with v8 coverage
-├── LICENSE                      # Apache-2.0
-├── README.md                    # This file
-├── FEATURE_GAPS.md              # Analysis of 18 identified feature gaps
-├── IMPLEMENTATION_PLAN.md       # 5-phase implementation plan
-├── AUDIT.md                     # Code audit and correctness review
-├── src/
-│   ├── index.ts                 # Plugin entrypoint — exports types and default function
-│   ├── types.ts                 # Config, event, snapshot, and error type definitions
-│   ├── config.ts                # Config validation with defaults and env-var fallbacks
-│   ├── logger.ts                # Leveled logger with [cycles-budget-guard] prefix
-│   ├── cycles.ts                # Wrappers around runcycles CyclesClient
-│   ├── budget.ts                # Budget classification, hint formatting, tool permissions
-│   ├── hooks.ts                 # All 5 hook implementations with reservation tracking
-│   └── dry-run.ts               # In-memory simulated Cycles client for dry-run mode
-└── tests/
-    ├── helpers.ts               # Shared test utilities (makeConfig, makeSnapshot, etc.)
-    ├── hooks.test.ts            # Hook implementation tests (79 tests)
-    ├── budget.test.ts           # Budget classification and hint formatting tests (24 tests)
-    ├── config.test.ts           # Config resolution and validation tests (29 tests)
-    ├── cycles.test.ts           # Cycles API wrapper tests (32 tests)
-    ├── dry-run.test.ts          # DryRunClient simulation tests (11 tests)
-    ├── logger.test.ts           # Logger level filtering tests (8 tests)
-    ├── index.test.ts            # Plugin entrypoint export tests (8 tests)
-    └── types.test.ts            # Error class and type tests (9 tests)
-```
-
-### Architecture
-
-```
-OpenClaw Runtime
-  │
-  ├─ before_model_resolve ──→ hooks.ts ──→ cycles.ts (reserve + commit) ──→ Cycles Server
-  │                                     └→ budget.ts (classify, fallbacks)
-  │
-  ├─ before_prompt_build  ──→ hooks.ts ──→ budget.ts (formatHint + forecast)
-  │
-  ├─ before_tool_call     ──→ hooks.ts ──→ budget.ts (isToolPermitted)
-  │                                     └→ cycles.ts (createReservation) ──→ Cycles Server
-  │
-  ├─ after_tool_call      ──→ hooks.ts ──→ cycles.ts (commitReservation) ──→ Cycles Server
-  │                                     └→ costEstimator callback (if configured)
-  │
-  └─ agent_end            ──→ hooks.ts ──→ cycles.ts (releaseReservation) ──→ Cycles Server
-                                        └→ onSessionEnd callback / analytics webhook
-```
-
-In dry-run mode, `Cycles Server` is replaced by the in-memory `DryRunClient`.
-
-## Local Development
-
-> **Note:** These commands are for developing the plugin itself. End users install via `openclaw plugins install` (see [Quick Start](#quick-start)).
-
-```bash
-npm install              # Install dependencies
-npm run build            # Build to dist/ (ESM + declarations)
-npm run typecheck        # Type-check without emitting
-npm test                 # Run all tests
-npm run test:watch       # Run tests in watch mode
-npm run test:coverage    # Run tests with v8 coverage report
-```
-
-Output is written to `dist/index.js` (ESM) with TypeScript declarations in `dist/index.d.ts`.
-
-## CI & Publishing
-
-CI runs automatically on push and pull requests to `main` (typecheck, build, test).
-
-To publish a new version to npm:
-
-```bash
-# Update version in package.json and openclaw.plugin.json
-npm version patch   # or minor / major
-
-# Push the tag — triggers the publish workflow
-git push origin main --follow-tags
-```
-
-The publish workflow:
-- Triggers on `v*` tags (e.g. `v0.1.0`, `v0.2.0`)
-- Runs the full build pipeline first
-- Publishes to npm with `--provenance --access public`
-- Requires the `NPM_TOKEN` secret in repository settings
-
-After publishing, users install via:
-
-```bash
-openclaw plugins install @runcycles/openclaw-budget-guard
-```
-
+For project structure, architecture diagrams, and development workflow, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 ## Documentation
 
 - [Cycles Documentation](https://runcycles.io) — full docs site

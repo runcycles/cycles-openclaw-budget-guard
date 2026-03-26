@@ -1,7 +1,7 @@
 {
   "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -215,6 +215,61 @@
         "type": "object",
         "additionalProperties": { "type": "number" },
         "description": "Map from tool name to maximum invocations allowed per session (e.g. {\"send_email\": 10})."
+      },
+      "aggressiveCacheInvalidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Proactively refetch budget snapshot after every commit/release for fresher data."
+      },
+      "otlpMetricsEndpoint": {
+        "type": "string",
+        "description": "OTLP HTTP endpoint for metrics export (e.g. http://localhost:4318/v1/metrics). Auto-creates a MetricsEmitter if set."
+      },
+      "otlpMetricsHeaders": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Custom HTTP headers for OTLP metrics requests (e.g. authorization tokens)."
+      },
+      "heartbeatIntervalMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Interval in milliseconds for heartbeat extension of long-running tool reservations. Set to 0 to disable."
+      },
+      "retryableStatusCodes": {
+        "type": "array",
+        "items": { "type": "number" },
+        "default": [429, 503, 504],
+        "description": "HTTP status codes from the Cycles server that trigger automatic retry with exponential backoff."
+      },
+      "transientRetryMaxAttempts": {
+        "type": "number",
+        "default": 2,
+        "description": "Maximum number of retry attempts for transient Cycles server errors."
+      },
+      "transientRetryBaseDelayMs": {
+        "type": "number",
+        "default": 500,
+        "description": "Base delay in milliseconds for exponential backoff on transient retries."
+      },
+      "burnRateWindowMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Time window in milliseconds for burn rate anomaly detection."
+      },
+      "burnRateAlertThreshold": {
+        "type": "number",
+        "default": 3.0,
+        "description": "Multiplier threshold for burn rate anomaly detection. Alert fires when current rate exceeds this multiple of the previous window rate."
+      },
+      "enableEventLog": {
+        "type": "boolean",
+        "default": false,
+        "description": "Record every reserve/commit/deny/block decision in the session summary event log."
+      },
+      "exhaustionWarningThresholdMs": {
+        "type": "number",
+        "default": 120000,
+        "description": "Fire exhaustion forecast warning when estimated time-to-exhaustion drops below this threshold (milliseconds)."
       }
     },
     "required": []

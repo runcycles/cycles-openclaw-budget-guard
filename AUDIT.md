@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-26
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.4.0
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.6.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -12,7 +12,7 @@
 | Category | Pass | Issues |
 |----------|------|--------|
 | OpenClaw Plugin Contract | 4/4 | 0 |
-| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 44/44 | 0 |
+| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 60/60 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
 | Hook Return Types | 5/5 | 0 |
@@ -27,7 +27,80 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics.
+**Overall: Plugin is contract-conformant and production-ready.** All 60 config properties (53 JSON-serializable + 7 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
+
+---
+
+## v0.6.0 Changes (2026-03-26)
+
+### New features
+
+| Feature | Description | Location |
+|---|---|---|
+| Reservation heartbeat | Auto-extends long-running tool reservations via `heartbeatIntervalMs` timer. Closes the "no heartbeat for long-running tools" known limitation. Uses protocol `extendReservation` endpoint when available. | `src/hooks.ts:startHeartbeat/stopHeartbeat` |
+| Retryable error handling | `reserveBudget` retries on transient HTTP errors (429/503/504) with exponential backoff. Configurable via `retryableStatusCodes`, `transientRetryMaxAttempts`, `transientRetryBaseDelayMs`. | `src/cycles.ts:reserveBudget` |
+| Burn rate anomaly detection | Tracks cost-per-window and fires `onBurnRateAnomaly` callback when burn rate exceeds `burnRateAlertThreshold` (default 3x). Catches runaway tool loops. | `src/hooks.ts:checkBurnRate` |
+| Session event log | When `enableEventLog=true`, records every reserve/commit/deny/block/release decision with timestamps. Capped at 10,000 entries. Included in `sessionSummary.eventLog`. | `src/hooks.ts:logEvent` |
+| Unconfigured tool report | Session summary includes `unconfiguredTools` array listing tools without explicit `toolBaseCosts` entries, with call counts and estimated total cost. | `src/hooks.ts:agentEnd` |
+| Predictive exhaustion warning | Fires `onExhaustionForecast` callback when estimated time-to-exhaustion drops below `exhaustionWarningThresholdMs` (default 120s). | `src/hooks.ts:checkExhaustionForecast` |
+
+### Config additions
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `heartbeatIntervalMs` | number | `30000` | Heartbeat interval for long-running tools |
+| `retryableStatusCodes` | number[] | `[429, 503, 504]` | HTTP codes that trigger retry |
+| `transientRetryMaxAttempts` | number | `2` | Max retry attempts |
+| `transientRetryBaseDelayMs` | number | `500` | Base delay for exponential backoff |
+| `burnRateWindowMs` | number | `60000` | Burn rate detection window |
+| `burnRateAlertThreshold` | number | `3.0` | Burn rate spike multiplier |
+| `onBurnRateAnomaly` | callback | — | Fired on burn rate anomaly |
+| `enableEventLog` | boolean | `false` | Enable session event log |
+| `exhaustionWarningThresholdMs` | number | `120000` | Exhaustion forecast threshold |
+| `onExhaustionForecast` | callback | — | Fired on exhaustion forecast |
+
+### Test coverage
+
+| Metric | v0.5.0 | v0.6.0 |
+|---|---|---|
+| Test count | 271 | 283 |
+| Statement coverage | 99.67% | 98.35% |
+| Branch coverage | 98.97% | 96.91% |
+| Line coverage | 100% | 98.95% |
+
+---
+
+## v0.5.0 Changes (2026-03-26)
+
+### New features
+
+| Feature | Description | Location |
+|---|---|---|
+| Model reserve-then-commit | Model reservations are now held open and committed in the next `beforePromptBuild` or at `agentEnd`, allowing `modelCostEstimator` to reconcile costs. Previously model cost was committed immediately in `beforeModelResolve`. | `src/hooks.ts:269-310` |
+| `modelCostEstimator` callback | New config option: `(ctx: { model, estimatedCost, turnIndex }) => number \| undefined`. Called when committing a model reservation. | `src/types.ts:128-132` |
+| `MetricsEmitter` interface | New config option with `gauge`/`counter`/`histogram` methods. 12 metrics emitted at key lifecycle points (budget levels, reservations, commits, denials, downgrades, tool blocks, session summary). | `src/types.ts:142-147`, `src/hooks.ts` |
+| `StandardMetrics` on commits | `commitUsage()` now accepts optional `metrics` parameter (model_version, tokens, latency). Model commits include `model_version`. | `src/cycles.ts:214-235` |
+| Aggressive cache invalidation | `aggressiveCacheInvalidation` config (default: true) proactively refetches budget snapshot after every commit/release. Reduces staleness from 5s to near-zero for single-agent scenarios. | `src/hooks.ts:699-704` |
+| OTLP metrics adapter | `createOtlpEmitter(opts)` exports a lightweight OTLP HTTP adapter. Auto-created when `otlpMetricsEndpoint` is set without a custom `metricsEmitter`. | `src/metrics-otlp.ts`, `src/index.ts:109-117` |
+
+### Config additions
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `modelCostEstimator` | callback | — | Reconcile model cost at commit time |
+| `metricsEmitter` | callback | — | Observability pipeline integration |
+| `aggressiveCacheInvalidation` | boolean | `true` | Proactive snapshot refetch after mutations |
+| `otlpMetricsEndpoint` | string | — | OTLP HTTP endpoint for auto metrics export |
+| `otlpMetricsHeaders` | object | — | Custom headers for OTLP requests |
+
+### Test coverage
+
+| Metric | v0.4.0 | v0.5.0 |
+|---|---|---|
+| Test count | 217 | 252 |
+| Statement coverage | 100% | 98.68% |
+| Branch coverage | 99% | 97.13% |
+| Line coverage | 100% | 99.12% |
 
 ---
 
@@ -122,7 +195,7 @@ The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is 
 | `after_tool_call` | 10 | `void` | PASS |
 | `agent_end` | 100 | `void` | PASS |
 
-### Config Schema Alignment (all 44 fields match across 3 sources)
+### Config Schema Alignment (all 60 fields match across 3 sources — v0.4.0 baseline shown below, v0.5.0/v0.6.0 additions documented in respective sections)
 
 **Core fields (original 16):**
 

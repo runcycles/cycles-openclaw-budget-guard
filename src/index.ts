@@ -15,6 +15,7 @@ import {
   afterToolCall,
   agentEnd,
 } from "./hooks.js";
+import { createOtlpEmitter } from "./metrics-otlp.js";
 
 import type { OpenClawPluginApi } from "./types.js";
 
@@ -26,8 +27,16 @@ export type {
   BudgetTransitionEvent,
   BudgetStatusMetadata,
   CostEstimatorContext,
+  ModelCostEstimatorContext,
+  MetricsEmitter,
+  StandardMetrics,
   SessionSummary,
+  ReservationLogEntry,
+  BurnRateAnomalyEvent,
+  ExhaustionForecastEvent,
 } from "./types.js";
+export { createOtlpEmitter } from "./metrics-otlp.js";
+export type { OtlpEmitterOptions } from "./metrics-otlp.js";
 
 export default function (api: OpenClawPluginApi): void {
   // OpenClaw provides plugin-specific config on api.pluginConfig (from
@@ -56,7 +65,7 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[cycles-budget-guard] v0.4.0 starting`,
+    `[cycles-budget-guard] v0.6.0 starting`,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,
@@ -99,6 +108,17 @@ export default function (api: OpenClawPluginApi): void {
   if (Object.keys(config.toolBaseCosts).length === 0) {
     api.logger.info(
       "[cycles-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
+    );
+  }
+
+  // v0.5.0: Auto-create OTLP metrics emitter if endpoint is configured and no custom emitter provided
+  if (config.otlpMetricsEndpoint && !config.metricsEmitter) {
+    config.metricsEmitter = createOtlpEmitter({
+      endpoint: config.otlpMetricsEndpoint,
+      headers: config.otlpMetricsHeaders,
+    });
+    api.logger.info(
+      `[cycles-budget-guard] OTLP metrics emitter configured → ${config.otlpMetricsEndpoint}`,
     );
   }
 

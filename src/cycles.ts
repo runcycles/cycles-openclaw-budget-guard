@@ -14,8 +14,12 @@ import {
   type ReservationCreateResponse,
 } from "runcycles";
 
-import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger } from "./types.js";
+import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger, StandardMetrics } from "./types.js";
 import { classifyBudget } from "./budget.js";
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ---------------------------------------------------------------------------
 // Client factory
@@ -181,24 +185,38 @@ export async function reserveBudget(
     overage_policy: opts.overagePolicy ?? config.overagePolicy,
   };
 
-  let response;
-  try {
-    response = await client.createReservation(body);
-  } catch {
-    // Network-level error — treat as DENY so callers can handle uniformly
-    return {
-      decision: "DENY" as ReservationCreateResponse["decision"],
-      affectedScopes: [],
-      reasonCode: "reservation_network_error",
-    };
+  let response: { isSuccess: boolean; status: number; body?: unknown; errorMessage?: string } | undefined;
+  const maxAttempts = 1 + config.transientRetryMaxAttempts;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      response = await client.createReservation(body);
+    } catch {
+      // Network-level error — retry if attempts remain, otherwise DENY
+      if (attempt < maxAttempts - 1) {
+        await sleepMs(config.transientRetryBaseDelayMs * Math.pow(2, attempt));
+        continue;
+      }
+      return {
+        decision: "DENY" as ReservationCreateResponse["decision"],
+        affectedScopes: [],
+        reasonCode: "reservation_network_error",
+      };
+    }
+
+    // v0.6.0: Retry on transient HTTP errors (429, 503, 504)
+    if (!response.isSuccess && config.retryableStatusCodes.includes(response.status) && attempt < maxAttempts - 1) {
+      await sleepMs(config.transientRetryBaseDelayMs * Math.pow(2, attempt));
+      continue;
+    }
+    break;
   }
 
-  if (!response.isSuccess) {
-    // Build a synthetic DENY response so callers can handle uniformly
+  if (!response || !response.isSuccess) {
     return {
       decision: "DENY" as ReservationCreateResponse["decision"],
       affectedScopes: [],
-      reasonCode: response.errorMessage ?? "reservation_failed",
+      reasonCode: response?.errorMessage ?? "reservation_failed",
     };
   }
 
@@ -217,12 +235,16 @@ export async function commitUsage(
   actual: number,
   unit: string,
   logger: OpenClawLogger,
+  metrics?: StandardMetrics,
 ): Promise<void> {
   try {
     const body: Record<string, unknown> = {
       idempotency_key: randomUUID(),
       actual: { unit, amount: actual },
     };
+    if (metrics) {
+      body.metrics = metrics;
+    }
     const response = await client.commitReservation(reservationId, body);
     if (!response.isSuccess) {
       logger.warn(

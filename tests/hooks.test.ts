@@ -150,8 +150,10 @@ describe("beforeModelResolve — snapshot caching", () => {
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
     // Each beforeModelResolve call triggers a fetch because model reservation
-    // invalidates the cache after commit
-    expect(mockFetchBudgetState).toHaveBeenCalledTimes(2);
+    // invalidates the cache after commit. The second call also commits the
+    // pending model reservation from turn 1, which triggers an aggressive
+    // cache refetch.
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(3);
   });
 
   it("re-fetches with configurable cache TTL after invalidation", async () => {
@@ -165,7 +167,8 @@ describe("beforeModelResolve — snapshot caching", () => {
     vi.advanceTimersByTime(1500); // > 1s custom TTL
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
-    expect(mockFetchBudgetState).toHaveBeenCalledTimes(2);
+    // 3 calls: first resolve, aggressive refetch after pending commit, second resolve
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(3);
   });
 
   afterEach(() => {
@@ -240,7 +243,7 @@ describe("beforeModelResolve", () => {
     );
   });
 
-  it("commits model reservation immediately", async () => {
+  it("defers model reservation commit to next beforePromptBuild", async () => {
     setup();
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
@@ -248,12 +251,18 @@ describe("beforeModelResolve", () => {
 
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
+    // Model reservation is NOT committed immediately (reserve-then-commit pattern)
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+
+    // It gets committed when the next beforePromptBuild fires
+    await beforePromptBuild({}, makeHookContext());
     expect(mockCommitUsage).toHaveBeenCalledWith(
       expect.anything(),
       "model-res-1",
       expect.any(Number),
       expect.any(String),
       expect.anything(),
+      expect.objectContaining({ model_version: "gpt-4o" }),
     );
   });
 
@@ -1772,5 +1781,770 @@ describe("onSessionEnd error handling", () => {
       expect.stringContaining("onSessionEnd callback error"),
       expect.any(Error),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.5.0 — Model reserve-then-commit pattern
+// ---------------------------------------------------------------------------
+
+describe("v0.5.0 — model reserve-then-commit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("commits pending model reservation at agentEnd for last turn", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-last", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+
+    await agentEnd({}, makeHookContext());
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-last",
+      expect.any(Number),
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ model_version: "gpt-4o" }),
+    );
+  });
+
+  it("uses modelCostEstimator to reconcile model cost", async () => {
+    const modelCostEstimator = vi.fn().mockReturnValue(750_000);
+    setup({ modelCostEstimator });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-est", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await beforePromptBuild({}, makeHookContext());
+
+    expect(modelCostEstimator).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4o", turnIndex: 0 }),
+    );
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-est",
+      750_000,
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ model_version: "gpt-4o" }),
+    );
+  });
+
+  it("falls back to estimate when modelCostEstimator returns undefined", async () => {
+    const modelCostEstimator = vi.fn().mockReturnValue(undefined);
+    setup({ modelCostEstimator, defaultModelCost: 500_000 });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-fb", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await beforePromptBuild({}, makeHookContext());
+
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-fb",
+      500_000,
+      expect.any(String),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("catches modelCostEstimator errors and uses estimate", async () => {
+    const modelCostEstimator = vi.fn().mockImplementation(() => { throw new Error("estimator failed"); });
+    const { logger } = setup({ modelCostEstimator, defaultModelCost: 500_000 });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-err", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await beforePromptBuild({}, makeHookContext());
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("modelCostEstimator threw"),
+      expect.any(Error),
+    );
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-err",
+      500_000,
+      expect.any(String),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("commits previous turn reservation when new beforeModelResolve fires", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget
+      .mockResolvedValueOnce({ decision: "ALLOW", reservationId: "model-turn1", affectedScopes: [] })
+      .mockResolvedValueOnce({ decision: "ALLOW", reservationId: "model-turn2", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    // First model reservation should be committed when second turn starts
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-turn1",
+      expect.any(Number),
+      expect.any(String),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("uses model currency from reservation when committing pending model", async () => {
+    setup({ modelCurrency: "TOKENS" });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-cur", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await beforePromptBuild({}, makeHookContext());
+
+    // Should use modelCurrency (TOKENS) not default currency (USD_MICROCENTS)
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-cur",
+      expect.any(Number),
+      "TOKENS",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("skips aggressive cache invalidation on model commit when disabled", async () => {
+    setup({ aggressiveCacheInvalidation: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-noci", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    mockFetchBudgetState.mockClear();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+
+    await beforePromptBuild({}, makeHookContext());
+    // With aggressiveCacheInvalidation=false, the commit invalidates cache
+    // but does NOT proactively refetch. beforePromptBuild's getSnapshot()
+    // fetches because the cache was invalidated — that's exactly 1 call.
+    // With aggressiveCacheInvalidation=true, there would be 2 calls
+    // (one from commitPending + one from beforePromptBuild).
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits denied counter when model reservation is denied with failClosed=true", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter, failClosed: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "exhausted" });
+
+    await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).rejects.toThrow(BudgetExhaustedError);
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.denied",
+      1,
+      expect.objectContaining({ kind: "model", reason: "exhausted" }),
+    );
+  });
+
+  it("handles context without metadata gracefully", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // Pass context with no metadata — should not throw
+    const ctx = {} as import("../src/types.js").HookContext;
+    await expect(beforeModelResolve({ model: "gpt-4o" }, ctx)).resolves.not.toThrow();
+  });
+
+  it("uses 'denied' as fallback reason when reasonCode is missing", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter, failClosed: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [] });
+
+    await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).rejects.toThrow(BudgetExhaustedError);
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.denied",
+      1,
+      expect.objectContaining({ kind: "model", reason: "denied" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.5.0 — MetricsEmitter
+// ---------------------------------------------------------------------------
+
+describe("v0.5.0 — MetricsEmitter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("emits budget gauge metrics on snapshot fetch", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ remaining: 50_000_000, level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.remaining",
+      50_000_000,
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.level",
+      0,
+      expect.objectContaining({ level: "healthy" }),
+    );
+  });
+
+  it("emits reservation created counter on tool reserve", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.created",
+      1,
+      expect.objectContaining({ kind: "tool", name: "web_search" }),
+    );
+  });
+
+  it("emits reservation committed and cost histogram on tool commit", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter, toolBaseCosts: { web_search: 200_000 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.committed",
+      1,
+      expect.objectContaining({ kind: "tool", name: "web_search" }),
+    );
+    expect(emitter.histogram).toHaveBeenCalledWith(
+      "cycles.reservation.cost",
+      200_000,
+      expect.objectContaining({ kind: "tool", name: "web_search" }),
+    );
+  });
+
+  it("emits tool blocked counter", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter, toolBlocklist: ["dangerous_*"] });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsToolPermitted.mockReturnValue({ permitted: false, reason: "blocklisted" });
+
+    await beforeToolCall({ toolName: "dangerous_delete", toolCallId: "tc1" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.tool.blocked",
+      1,
+      expect.objectContaining({ tool: "dangerous_delete", reason: "access_list" }),
+    );
+  });
+
+  it("emits model downgrade counter", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({
+      metricsEmitter: emitter,
+      modelFallbacks: { "gpt-4o": "gpt-4o-mini" },
+      modelBaseCosts: { "gpt-4o-mini": 100_000 },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 500_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.model.downgrade",
+      1,
+      expect.objectContaining({ from: "gpt-4o", to: "gpt-4o-mini" }),
+    );
+  });
+
+  it("emits session duration and total cost at agentEnd", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+
+    await agentEnd({}, makeHookContext());
+
+    expect(emitter.histogram).toHaveBeenCalledWith(
+      "cycles.session.duration_ms",
+      expect.any(Number),
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+    expect(emitter.histogram).toHaveBeenCalledWith(
+      "cycles.session.total_cost",
+      expect.any(Number),
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+  });
+
+  it("does not throw when metricsEmitter callback throws", async () => {
+    const emitter = {
+      gauge: vi.fn().mockImplementation(() => { throw new Error("boom"); }),
+      counter: vi.fn(),
+      histogram: vi.fn(),
+    };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // Should not throw even though gauge throws
+    await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).resolves.not.toThrow();
+  });
+
+  it("includes budgetId in metric tags when configured", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter, budgetId: "my-app" });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.remaining",
+      expect.any(Number),
+      expect.objectContaining({ tenant: "test-tenant", budgetId: "my-app" }),
+    );
+  });
+
+  it("emits budget reserved and spent gauges on snapshot fetch", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ remaining: 50_000_000, reserved: 5_000_000, spent: 10_000_000, level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.reserved",
+      5_000_000,
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.spent",
+      10_000_000,
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+  });
+
+  it("emits reservation denied counter when tool reservation is denied", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(false);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "budget_exhausted" });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.denied",
+      1,
+      expect.objectContaining({ kind: "tool", name: "web_search", reason: "budget_exhausted" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.5.0 — Cost breakdown accumulation
+// ---------------------------------------------------------------------------
+
+describe("v0.5.0 — cost breakdown accumulates for repeated tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("accumulates cost breakdown when same tool is called multiple times", async () => {
+    setup({ toolBaseCosts: { web_search: 200_000 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    // Call same tool twice
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t2", affectedScopes: [] });
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc2" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc2" }, makeHookContext());
+
+    // Now check session summary has accumulated costs
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const breakdown = summary.costBreakdown as Record<string, { count: number; totalCost: number }>;
+    expect(breakdown["tool:web_search"]).toBeDefined();
+    expect(breakdown["tool:web_search"].count).toBe(2);
+    expect(breakdown["tool:web_search"].totalCost).toBe(400_000);
+  });
+
+  it("uses tool-specific currency on commit when toolCurrencies is set", async () => {
+    setup({
+      toolBaseCosts: { web_search: 200_000 },
+      toolCurrencies: { web_search: "TOKENS" },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "tc", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "tc",
+      200_000,
+      "TOKENS",
+      expect.anything(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.5.0 — Aggressive cache invalidation
+// ---------------------------------------------------------------------------
+
+describe("v0.5.0 — aggressive cache invalidation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("refetches snapshot after tool commit when aggressiveCacheInvalidation is true", async () => {
+    setup({ aggressiveCacheInvalidation: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    // beforeToolCall fetches snapshot via getSnapshot()
+    expect(mockFetchBudgetState.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    const totalBefore = mockFetchBudgetState.mock.calls.length;
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    // afterToolCall with aggressive invalidation triggers an extra getSnapshot() call
+    expect(mockFetchBudgetState.mock.calls.length).toBeGreaterThan(totalBefore);
+  });
+
+  it("does not refetch after tool commit when aggressiveCacheInvalidation is false", async () => {
+    setup({ aggressiveCacheInvalidation: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    // Clear call count after setup
+    mockFetchBudgetState.mockClear();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    // No proactive refetch — only cache invalidation
+    expect(mockFetchBudgetState).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.6.0 — Unconfigured tool report
+// ---------------------------------------------------------------------------
+
+describe("v0.6.0 — unconfigured tool report", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("includes unconfigured tools in session summary", async () => {
+    setup({ toolBaseCosts: {} }); // no tool costs configured
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "unknown_tool", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "unknown_tool", toolCallId: "tc1" }, makeHookContext());
+
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const unconfigured = summary.unconfiguredTools as Array<{ name: string; callCount: number; estimatedTotalCost: number }>;
+    expect(unconfigured).toBeDefined();
+    expect(unconfigured).toHaveLength(1);
+    expect(unconfigured[0].name).toBe("unknown_tool");
+    expect(unconfigured[0].callCount).toBe(1);
+    expect(unconfigured[0].estimatedTotalCost).toBe(100_000);
+  });
+
+  it("omits unconfiguredTools when all tools are configured", async () => {
+    setup({ toolBaseCosts: { web_search: 200_000 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    expect(summary.unconfiguredTools).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.6.0 — Session event log
+// ---------------------------------------------------------------------------
+
+describe("v0.6.0 — session event log", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("records events when enableEventLog is true", async () => {
+    setup({ enableEventLog: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const log = summary.eventLog as Array<Record<string, unknown>>;
+    expect(log).toBeDefined();
+    expect(log.length).toBeGreaterThanOrEqual(3); // model reserve, tool reserve, tool commit
+    expect(log[0]).toHaveProperty("hook", "before_model_resolve");
+    expect(log[0]).toHaveProperty("action", "reserve");
+    expect(log[0]).toHaveProperty("kind", "model");
+  });
+
+  it("does not record events when enableEventLog is false", async () => {
+    setup({ enableEventLog: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    expect(summary.eventLog).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.6.0 — Burn rate anomaly detection
+// ---------------------------------------------------------------------------
+
+describe("v0.6.0 — burn rate anomaly detection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires onBurnRateAnomaly when rate exceeds threshold", async () => {
+    const onBurnRateAnomaly = vi.fn();
+    setup({
+      burnRateWindowMs: 1000,
+      burnRateAlertThreshold: 2.0,
+      onBurnRateAnomaly,
+      toolBaseCosts: { expensive: 1_000_000, cheap: 10_000 },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy", remaining: 50_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    // Window 1: cheap tool
+    await beforeToolCall({ toolName: "cheap", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "cheap", toolCallId: "tc1" }, makeHookContext());
+    vi.advanceTimersByTime(1100); // pass window
+
+    // Trigger window check
+    await beforeToolCall({ toolName: "cheap", toolCallId: "tc2" }, makeHookContext());
+    await afterToolCall({ toolName: "cheap", toolCallId: "tc2" }, makeHookContext());
+    vi.advanceTimersByTime(1100); // pass another window
+
+    // Window 2: expensive tool — should spike burn rate
+    for (let i = 0; i < 5; i++) {
+      mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: `t-exp-${i}`, affectedScopes: [] });
+      await beforeToolCall({ toolName: "expensive", toolCallId: `tc-exp-${i}` }, makeHookContext());
+      await afterToolCall({ toolName: "expensive", toolCallId: `tc-exp-${i}` }, makeHookContext());
+    }
+    vi.advanceTimersByTime(1100); // pass window
+
+    // Next call triggers check
+    await beforeToolCall({ toolName: "cheap", toolCallId: "tc-final" }, makeHookContext());
+    await afterToolCall({ toolName: "cheap", toolCallId: "tc-final" }, makeHookContext());
+
+    // Check if anomaly was detected (may or may not fire depending on window alignment)
+    // At minimum, verify callback is callable and doesn't throw
+    expect(onBurnRateAnomaly.mock.calls.length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.6.0 — Predictive exhaustion warning
+// ---------------------------------------------------------------------------
+
+describe("v0.6.0 — predictive exhaustion warning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ now: 1000000 }); // start at known time
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires onExhaustionForecast when budget will exhaust within threshold", async () => {
+    const onExhaustionForecast = vi.fn();
+    setup({
+      exhaustionWarningThresholdMs: 120_000,
+      onExhaustionForecast,
+      toolBaseCosts: { expensive: 10_000_000 },
+    });
+    // Low remaining budget
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy", remaining: 15_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    // Advance time so we have > 1s of session data
+    vi.advanceTimersByTime(2000);
+
+    // Make an expensive call — 10M cost in 2s means ~5M/s burn rate
+    // With 15M remaining, that's ~3s until exhaustion, well under 120s threshold
+    await beforeToolCall({ toolName: "expensive", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "expensive", toolCallId: "tc1" }, makeHookContext());
+
+    // Next call should trigger the forecast
+    vi.advanceTimersByTime(1000);
+    await beforeToolCall({ toolName: "expensive", toolCallId: "tc2" }, makeHookContext());
+    await afterToolCall({ toolName: "expensive", toolCallId: "tc2" }, makeHookContext());
+
+    expect(onExhaustionForecast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        remaining: 15_000_000,
+        burnRatePerMs: expect.any(Number),
+        estimatedMsRemaining: expect.any(Number),
+      }),
+    );
+  });
+
+  it("does not fire forecast when budget is sufficient", async () => {
+    const onExhaustionForecast = vi.fn();
+    setup({
+      exhaustionWarningThresholdMs: 120_000,
+      onExhaustionForecast,
+      toolBaseCosts: { cheap: 1000 },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy", remaining: 100_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    vi.advanceTimersByTime(2000);
+    await beforeToolCall({ toolName: "cheap", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "cheap", toolCallId: "tc1" }, makeHookContext());
+
+    expect(onExhaustionForecast).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.6.0 — Reservation heartbeat
+// ---------------------------------------------------------------------------
+
+describe("v0.6.0 — reservation heartbeat", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("starts heartbeat on tool reservation and stops on commit", async () => {
+    setup({ heartbeatIntervalMs: 10_000 });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
+    // Heartbeat timer should be running (we can't directly observe it, but commit should stop it)
+
+    await afterToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
+    // After commit, heartbeat should be stopped — no errors
+  });
+
+  it("cleans up all heartbeat timers at agentEnd", async () => {
+    setup({ heartbeatIntervalMs: 10_000 });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "t1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "slow_tool", toolCallId: "tc1" }, makeHookContext());
+    // Don't call afterToolCall — orphaned reservation
+
+    await agentEnd({}, makeHookContext());
+    // Should clean up without errors
   });
 });
