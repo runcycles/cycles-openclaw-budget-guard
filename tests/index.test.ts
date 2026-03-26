@@ -135,7 +135,7 @@ describe("plugin entrypoint", () => {
     }
   });
 
-  it("calls resolveConfig with api.config", () => {
+  it("calls resolveConfig with api.config when flat", () => {
     const rawConfig = { tenant: "test" };
     mockResolveConfig.mockReturnValue(makeConfig());
 
@@ -147,6 +147,20 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     expect(mockResolveConfig).toHaveBeenCalledWith(rawConfig);
+  });
+
+  it("unwraps config wrapper when OpenClaw nests under config key", () => {
+    const inner = { tenant: "test", cyclesBaseUrl: "http://localhost:7878" };
+    mockResolveConfig.mockReturnValue(makeConfig());
+
+    const api = {
+      config: { config: inner },
+      logger: makeLogger(),
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    expect(mockResolveConfig).toHaveBeenCalledWith(inner);
   });
 
   it("calls initHooks with resolved config and api.logger", () => {
