@@ -1,7 +1,7 @@
 {
   "id": "cycles-openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -212,6 +212,6 @@
         "description": "Parent budget scope for team/pool budget visibility."
       }
     },
-    "required": ["tenant"]
+    "required": []
   }
 }
