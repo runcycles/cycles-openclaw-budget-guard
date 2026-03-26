@@ -212,6 +212,6 @@
         "description": "Parent budget scope for team/pool budget visibility."
       }
     },
-    "required": ["tenant"]
+    "required": []
   }
 }
