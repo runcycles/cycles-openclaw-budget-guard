@@ -7,5 +7,12 @@
 
 # Cycles strict rules
 - yaml API specs always the authority
-- always udated AUDIT.md files when making changes to server, admin, client repos
+- always update AUDIT.md files when making changes to server, admin, client repos
 - maintain at least 95% or higher test coverage for all code repos
+
+# Build & Test
+- Install: `npm install`
+- Build: `npm run build`
+- Test: `npm test`
+- Test with coverage: `npm run test:coverage`
+- Type check: `npm run typecheck`
