@@ -183,8 +183,10 @@ export interface OpenClawPluginApi {
     handler: (...args: any[]) => any,
     opts?: { priority?: number; name?: string },
   ): void;
-  /** Plugin configuration from the OpenClaw config file. */
+  /** Full system configuration snapshot. */
   config: Record<string, unknown>;
+  /** Plugin-specific config from plugins.entries.<id>.config. */
+  pluginConfig?: Record<string, unknown>;
   /** Runtime logger. */
   logger: OpenClawLogger;
 }

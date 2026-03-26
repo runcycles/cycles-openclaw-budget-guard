@@ -30,16 +30,14 @@ export type {
 } from "./types.js";
 
 export default function (api: OpenClawPluginApi): void {
-  // OpenClaw wraps plugin config under a "config" key in the entry object.
-  // Unwrap if present so resolveConfig sees the flat config values.
-  const raw = api.config as Record<string, unknown>;
-  const unwrapped = (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config))
-    ? raw.config as Record<string, unknown>
-    : raw;
+  // OpenClaw provides plugin-specific config on api.pluginConfig (from
+  // plugins.entries.<id>.config in openclaw.json). Fall back to api.config
+  // for older OpenClaw versions or direct invocation in tests.
+  const raw = (api.pluginConfig ?? api.config) as Record<string, unknown>;
 
   let config;
   try {
-    config = resolveConfig(unwrapped);
+    config = resolveConfig(raw);
   } catch (err) {
     // During plugin install, config may not be available yet.
     // Log and skip registration so install can complete.
@@ -49,8 +47,34 @@ export default function (api: OpenClawPluginApi): void {
   }
 
   if (!config.enabled) {
+    api.logger.info("[cycles-budget-guard] Plugin disabled via config");
     return;
   }
+
+  // Log resolved config summary on startup so operators can verify settings.
+  const maskedKey = config.cyclesApiKey
+    ? `****${config.cyclesApiKey.slice(-4)}`
+    : "(not set)";
+  const lines = [
+    `[cycles-budget-guard] v0.3.4 starting`,
+    `  tenant: ${config.tenant}`,
+    `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
+    `  cyclesApiKey: ${maskedKey}`,
+    `  currency: ${config.currency}`,
+    `  failClosed: ${config.failClosed}`,
+    `  dryRun: ${config.dryRun}`,
+    `  logLevel: ${config.logLevel}`,
+    `  lowBudgetThreshold: ${config.lowBudgetThreshold}`,
+    `  exhaustedThreshold: ${config.exhaustedThreshold}`,
+  ];
+  if (config.budgetId) lines.push(`  budgetId: ${config.budgetId}`);
+  if (Object.keys(config.modelFallbacks).length > 0)
+    lines.push(`  modelFallbacks: ${Object.keys(config.modelFallbacks).join(", ")}`);
+  if (Object.keys(config.toolBaseCosts).length > 0)
+    lines.push(`  toolBaseCosts: ${Object.keys(config.toolBaseCosts).join(", ")}`);
+  if (config.toolAllowlist) lines.push(`  toolAllowlist: ${config.toolAllowlist.join(", ")}`);
+  if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
+  api.logger.info(lines.join("\n"));
 
   initHooks(config, api.logger);
 
