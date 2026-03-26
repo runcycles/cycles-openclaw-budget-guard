@@ -1,5 +1,5 @@
 {
-  "id": "cycles-openclaw-budget-guard",
+  "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
   "version": "0.3.1",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",

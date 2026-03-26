@@ -60,7 +60,7 @@ openclaw plugins install -l ./cycles-openclaw-budget-guard
 ### 2. Enable the plugin
 
 ```bash
-openclaw plugins enable cycles-openclaw-budget-guard
+openclaw plugins enable openclaw-budget-guard
 ```
 
 ### 3. Add minimal configuration
@@ -71,7 +71,7 @@ Add the following to your OpenClaw config file (typically `openclaw.json` or `op
 {
   "plugins": {
     "entries": {
-      "cycles-openclaw-budget-guard": {
+      "openclaw-budget-guard": {
         "config": {
           "cyclesBaseUrl": "http://localhost:7878",
           "cyclesApiKey": "cyc_your_api_key_here",
@@ -104,7 +104,7 @@ To test without a live Cycles server:
 {
   "plugins": {
     "entries": {
-      "cycles-openclaw-budget-guard": {
+      "openclaw-budget-guard": {
         "config": {
           "tenant": "my-org",
           "cyclesBaseUrl": "http://unused",
@@ -124,7 +124,7 @@ To test without a live Cycles server:
 {
   "plugins": {
     "entries": {
-      "cycles-openclaw-budget-guard": {
+      "openclaw-budget-guard": {
         "config": {
           "enabled": true,
           "cyclesBaseUrl": "http://localhost:7878",

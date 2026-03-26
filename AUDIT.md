@@ -60,7 +60,7 @@ The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is 
 | Requirement | Location | Status |
 |---|---|---|
 | `openclaw.extensions` in package.json | `package.json:28-29` — `"openclaw": { "extensions": ["./dist/index.js"] }` | PASS |
-| `openclaw.plugin.json` manifest with `id`, `extensions`, `configSchema` | `openclaw.plugin.json` — id: `cycles-openclaw-budget-guard`, extensions: `["./dist/index.js"]` | PASS |
+| `openclaw.plugin.json` manifest with `id`, `extensions`, `configSchema` | `openclaw.plugin.json` — id: `openclaw-budget-guard`, extensions: `["./dist/index.js"]` | PASS |
 | Default export: `function(api: OpenClawPluginApi): void` | `src/index.ts:32` | PASS |
 | Named exports: error types and config types | `src/index.ts:21-30` — `BudgetExhaustedError`, `ToolBudgetDeniedError`, `BudgetGuardConfig`, `BudgetLevel`, `BudgetSnapshot`, `BudgetTransitionEvent`, `BudgetStatusMetadata`, `CostEstimatorContext`, `SessionSummary` | PASS |
 
