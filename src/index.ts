@@ -30,7 +30,13 @@ export type {
 } from "./types.js";
 
 export default function (api: OpenClawPluginApi): void {
-  const config = resolveConfig(api.config);
+  // OpenClaw wraps plugin config under a "config" key in the entry object.
+  // Unwrap if present so resolveConfig sees the flat config values.
+  const raw = api.config as Record<string, unknown>;
+  const unwrapped = (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config))
+    ? raw.config as Record<string, unknown>
+    : raw;
+  const config = resolveConfig(unwrapped);
 
   if (!config.enabled) {
     return;
