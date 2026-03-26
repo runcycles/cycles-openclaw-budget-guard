@@ -77,6 +77,9 @@ export interface BudgetGuardConfig {
 
   // Phase 5 — Gap 18: Budget pools
   parentBudgetId?: string;
+
+  // Per-tool invocation limits per session
+  toolCallLimits?: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------

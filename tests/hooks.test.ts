@@ -958,6 +958,75 @@ describe("beforeToolCall", () => {
   });
 });
 
+describe("toolCallLimits", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("blocks tool when call limit is reached", async () => {
+    setup({ toolCallLimits: { send_email: 2 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // First two calls succeed
+    await beforeToolCall({ toolName: "send_email", toolCallId: "c1" }, makeHookContext());
+    await beforeToolCall({ toolName: "send_email", toolCallId: "c2" }, makeHookContext());
+
+    // Third call is blocked
+    const result = await beforeToolCall({ toolName: "send_email", toolCallId: "c3" }, makeHookContext());
+    expect(result).toEqual({
+      block: true,
+      blockReason: expect.stringContaining("exceeded session call limit (2)"),
+    });
+  });
+
+  it("does not block tools without a limit", async () => {
+    setup({ toolCallLimits: { send_email: 1 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // web_search has no limit
+    const result = await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+    expect(result).toBeUndefined();
+  });
+
+  it("does not enforce limits when toolCallLimits is undefined", async () => {
+    setup({ toolCallLimits: undefined });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    const result = await beforeToolCall({ toolName: "send_email", toolCallId: "c1" }, makeHookContext());
+    expect(result).toBeUndefined();
+  });
+});
+
+describe("beforeToolCall resolves userId/sessionId from ctx", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reads userId and sessionId from ctx.metadata", async () => {
+    setup({ userId: "config-user" });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot());
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    const ctx = makeHookContext({ userId: "ctx-user", sessionId: "ctx-session" });
+    await beforeToolCall({ toolName: "test_tool", toolCallId: "c1" }, ctx);
+
+    // The snapshot fetch should use the ctx-overridden values
+    expect(mockFetchBudgetState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ userId: "ctx-user", sessionId: "ctx-session" }),
+    );
+  });
+});
+
 describe("afterToolCall", () => {
   beforeEach(() => {
     vi.clearAllMocks();

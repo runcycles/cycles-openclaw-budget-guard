@@ -75,6 +75,8 @@ export function makeConfig(
     modelCurrency: undefined,
     // Gap 18
     parentBudgetId: undefined,
+    // Tool call limits
+    toolCallLimits: undefined,
     ...overrides,
   };
 }

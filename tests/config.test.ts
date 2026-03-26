@@ -291,4 +291,63 @@ describe("resolveConfig", () => {
     const cfg = resolveConfig({ ...minValid, parentBudgetId: "team-pool" });
     expect(cfg.parentBudgetId).toBe("team-pool");
   });
+
+  // --- New validation tests ---
+
+  it("throws when lowBudgetThreshold is negative", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, lowBudgetThreshold: -1 }),
+    ).toThrow("lowBudgetThreshold (-1) must be non-negative");
+  });
+
+  it("throws when exhaustedThreshold is negative", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, exhaustedThreshold: -1, lowBudgetThreshold: 100 }),
+    ).toThrow("exhaustedThreshold (-1) must be non-negative");
+  });
+
+  it("throws when maxRemainingCallsWhenLow is less than 1", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, maxRemainingCallsWhenLow: 0 }),
+    ).toThrow("maxRemainingCallsWhenLow (0) must be at least 1");
+  });
+
+  it("throws when overagePolicy is invalid", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, overagePolicy: "INVALID_POLICY" }),
+    ).toThrow('overagePolicy "INVALID_POLICY" is invalid');
+  });
+
+  it("accepts valid overage policies", () => {
+    for (const policy of ["REJECT", "ALLOW_IF_AVAILABLE", "ALLOW_WITH_OVERDRAFT"]) {
+      const cfg = resolveConfig({ ...minValid, overagePolicy: policy });
+      expect(cfg.overagePolicy).toBe(policy);
+    }
+  });
+
+  it("throws when toolOveragePolicies contains invalid policy", () => {
+    expect(() =>
+      resolveConfig({
+        ...minValid,
+        toolOveragePolicies: { web_search: "BAD" },
+      }),
+    ).toThrow('toolOveragePolicies["web_search"] = "BAD" is invalid');
+  });
+
+  it("parses toolCallLimits", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolCallLimits: { send_email: 10, deploy: 3 },
+    });
+    expect(cfg.toolCallLimits).toEqual({ send_email: 10, deploy: 3 });
+  });
+
+  it("throws when toolCallLimits contains value less than 1", () => {
+    expect(() =>
+      resolveConfig({
+        ...minValid,
+        toolCallLimits: { send_email: 0 },
+      }),
+    ).toThrow('toolCallLimits["send_email"] = 0 must be at least 1');
+  });
 });

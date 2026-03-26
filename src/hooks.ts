@@ -74,6 +74,9 @@ let totalModelCalls = 0;
 /** Gap 13: Remaining calls counter for limit_remaining_calls strategy. */
 let remainingCallsAllowed = 0;
 
+/** Per-tool invocation counters for toolCallLimits enforcement. */
+const toolCallCounts = new Map<string, number>();
+
 /** Gap 15: Session start time. */
 let sessionStartedAt = 0;
 
@@ -81,8 +84,6 @@ let sessionStartedAt = 0;
 let resolvedUserId: string | undefined;
 let resolvedSessionId: string | undefined;
 
-// Monotonic counter for synthetic model reservation keys
-let modelReservationCounter = 0;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -112,6 +113,7 @@ export function initHooks(
   lastKnownLevel = undefined;
   activeReservations.clear();
   costBreakdown.clear();
+  toolCallCounts.clear();
   totalToolCost = 0;
   totalToolCalls = 0;
   totalModelCost = 0;
@@ -120,7 +122,6 @@ export function initHooks(
   sessionStartedAt = Date.now();
   resolvedUserId = config.userId;
   resolvedSessionId = config.sessionId;
-  modelReservationCounter = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,26 +304,11 @@ export async function beforeModelResolve(
     );
   } else {
     totalReservationsMade++;
-    const reservationKey = result.reservationId
-      ? `model:${++modelReservationCounter}`
-      : undefined;
 
-    if (result.reservationId && reservationKey) {
-      activeReservations.set(reservationKey, {
-        reservationId: result.reservationId,
-        estimate: modelCost,
-        toolName: resolvedModel,
-        createdAt: Date.now(),
-        kind: "model",
-        currency: modelCurrency,
-      });
-
-      // Commit immediately (no after_model_resolve hook available)
-      try {
-        await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
-      } finally {
-        activeReservations.delete(reservationKey);
-      }
+    if (result.reservationId) {
+      // Commit immediately — no after_model_resolve hook exists in OpenClaw,
+      // so model cost is always estimated (not reconciled with actual tokens).
+      await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
     }
 
     // Gap 6 & 9: Track model cost
@@ -384,11 +370,30 @@ export async function beforeToolCall(
 ): Promise<ToolCallResult | undefined> {
   const toolName = event.toolName;
 
+  // Resolve user/session from ctx if available (consistent with beforeModelResolve)
+  if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
+  if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
+
   // Gap 7: Check tool allowlist/blocklist
   const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
   if (!permission.permitted) {
     logger.warn(`Tool "${toolName}" blocked by access list: ${permission.reason}`);
     return { block: true, blockReason: permission.reason };
+  }
+
+  // Enforce per-tool invocation limits
+  if (config.toolCallLimits) {
+    const limit = config.toolCallLimits[toolName];
+    if (limit !== undefined) {
+      const count = toolCallCounts.get(toolName) ?? 0;
+      if (count >= limit) {
+        logger.warn(`Tool "${toolName}" blocked: call limit ${limit} reached (${count} calls)`);
+        return {
+          block: true,
+          blockReason: `Tool "${toolName}" exceeded session call limit (${limit})`,
+        };
+      }
+    }
   }
 
   // Gap 12: Attach budget status
@@ -473,6 +478,7 @@ export async function beforeToolCall(
               currency: unit,
             });
           }
+          toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
           if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
             remainingCallsAllowed--;
           }
@@ -503,6 +509,9 @@ export async function beforeToolCall(
       currency: unit,
     });
   }
+
+  // Track per-tool invocation count for toolCallLimits
+  toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
 
   // Gap 13: Decrement remaining calls counter
   if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {

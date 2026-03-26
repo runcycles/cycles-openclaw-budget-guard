@@ -210,6 +210,11 @@
       "parentBudgetId": {
         "type": "string",
         "description": "Parent budget scope for team/pool budget visibility."
+      },
+      "toolCallLimits": {
+        "type": "object",
+        "additionalProperties": { "type": "number" },
+        "description": "Map from tool name to maximum invocations allowed per session (e.g. {\"send_email\": 10})."
       }
     },
     "required": []
