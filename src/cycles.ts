@@ -17,6 +17,10 @@ import {
 import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger, StandardMetrics } from "./types.js";
 import { classifyBudget } from "./budget.js";
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ---------------------------------------------------------------------------
 // Client factory
 // ---------------------------------------------------------------------------
@@ -182,23 +186,39 @@ export async function reserveBudget(
   };
 
   let response;
-  try {
-    response = await client.createReservation(body);
-  } catch {
-    // Network-level error — treat as DENY so callers can handle uniformly
-    return {
-      decision: "DENY" as ReservationCreateResponse["decision"],
-      affectedScopes: [],
-      reasonCode: "reservation_network_error",
-    };
+  let lastError: unknown;
+  const maxAttempts = 1 + config.transientRetryMaxAttempts;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      response = await client.createReservation(body);
+    } catch (err) {
+      lastError = err;
+      // Network-level error — retry if attempts remain, otherwise DENY
+      if (attempt < maxAttempts - 1) {
+        await sleepMs(config.transientRetryBaseDelayMs * Math.pow(2, attempt));
+        continue;
+      }
+      return {
+        decision: "DENY" as ReservationCreateResponse["decision"],
+        affectedScopes: [],
+        reasonCode: "reservation_network_error",
+      };
+    }
+
+    // v0.6.0: Retry on transient HTTP errors (429, 503, 504)
+    if (!response.isSuccess && config.retryableStatusCodes.includes(response.status) && attempt < maxAttempts - 1) {
+      await sleepMs(config.transientRetryBaseDelayMs * Math.pow(2, attempt));
+      continue;
+    }
+    break;
   }
 
-  if (!response.isSuccess) {
-    // Build a synthetic DENY response so callers can handle uniformly
+  if (!response || !response.isSuccess) {
     return {
       decision: "DENY" as ReservationCreateResponse["decision"],
       affectedScopes: [],
-      reasonCode: response.errorMessage ?? "reservation_failed",
+      reasonCode: (response as { errorMessage?: string })?.errorMessage ?? "reservation_failed",
     };
   }
 

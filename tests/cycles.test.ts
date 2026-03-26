@@ -568,6 +568,73 @@ describe("reserveBudget", () => {
     expect(result.decision).toBe("DENY");
     expect(result.reasonCode).toBe("reservation_network_error");
   });
+
+  it("retries on 429 status and succeeds on second attempt", async () => {
+    const retryConfig = makeConfig({
+      retryableStatusCodes: [429],
+      transientRetryMaxAttempts: 2,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation
+      .mockResolvedValueOnce({ isSuccess: false, status: 429, errorMessage: "rate_limited" })
+      .mockResolvedValueOnce({
+        isSuccess: true,
+        status: 200,
+        body: { decision: "ALLOW", reservation_id: "r-retry", affected_scopes: [] },
+      });
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("ALLOW");
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns DENY after exhausting retry attempts on 503", async () => {
+    const retryConfig = makeConfig({
+      retryableStatusCodes: [503],
+      transientRetryMaxAttempts: 1,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: false, status: 503, errorMessage: "service_unavailable",
+    });
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    // 1 initial + 1 retry = 2 attempts
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on network error and returns DENY if all attempts fail", async () => {
+    const retryConfig = makeConfig({
+      transientRetryMaxAttempts: 1,
+      transientRetryBaseDelayMs: 1,
+    });
+    mockCreateReservation.mockRejectedValue(new Error("network error"));
+
+    const client = createCyclesClient(retryConfig);
+    const result = await reserveBudget(client, retryConfig, {
+      actionKind: "tool.test",
+      actionName: "test",
+      estimate: 100,
+    });
+
+    expect(result.decision).toBe("DENY");
+    expect(result.reasonCode).toBe("reservation_network_error");
+    // 1 initial + 1 retry = 2 attempts
+    expect(mockCreateReservation).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("commitUsage", () => {

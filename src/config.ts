@@ -178,6 +178,26 @@ export function resolveConfig(
     // v0.5.0: OTLP metrics
     otlpMetricsEndpoint: asString(raw.otlpMetricsEndpoint),
     otlpMetricsHeaders: asStringRecord(raw.otlpMetricsHeaders),
+
+    // v0.6.0: Reservation heartbeat
+    heartbeatIntervalMs: asNumber(raw.heartbeatIntervalMs) ?? 30_000,
+
+    // v0.6.0: Retryable error handling
+    retryableStatusCodes: asNumberArray(raw.retryableStatusCodes) ?? [429, 503, 504],
+    transientRetryMaxAttempts: asNumber(raw.transientRetryMaxAttempts) ?? 2,
+    transientRetryBaseDelayMs: asNumber(raw.transientRetryBaseDelayMs) ?? 500,
+
+    // v0.6.0: Burn rate anomaly detection
+    burnRateWindowMs: asNumber(raw.burnRateWindowMs) ?? 60_000,
+    burnRateAlertThreshold: asNumber(raw.burnRateAlertThreshold) ?? 3.0,
+    onBurnRateAnomaly: asFunction(raw.onBurnRateAnomaly) as BudgetGuardConfig["onBurnRateAnomaly"],
+
+    // v0.6.0: Session event log
+    enableEventLog: asBool(raw.enableEventLog) ?? false,
+
+    // v0.6.0: Predictive exhaustion warning
+    exhaustionWarningThresholdMs: asNumber(raw.exhaustionWarningThresholdMs) ?? 120_000,
+    onExhaustionForecast: asFunction(raw.onExhaustionForecast) as BudgetGuardConfig["onExhaustionForecast"],
   };
 }
 
@@ -237,6 +257,13 @@ function asNumberRecord(
 function asStringArray(v: unknown): string[] | undefined {
   if (Array.isArray(v) && v.every((item) => typeof item === "string")) {
     return v as string[];
+  }
+  return undefined;
+}
+
+function asNumberArray(v: unknown): number[] | undefined {
+  if (Array.isArray(v) && v.every((item) => typeof item === "number")) {
+    return v as number[];
   }
   return undefined;
 }

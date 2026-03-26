@@ -31,6 +31,9 @@ export type {
   MetricsEmitter,
   StandardMetrics,
   SessionSummary,
+  ReservationLogEntry,
+  BurnRateAnomalyEvent,
+  ExhaustionForecastEvent,
 } from "./types.js";
 export { createOtlpEmitter } from "./metrics-otlp.js";
 export type { OtlpEmitterOptions } from "./metrics-otlp.js";
@@ -62,7 +65,7 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[cycles-budget-guard] v0.5.0 starting`,
+    `[cycles-budget-guard] v0.6.0 starting`,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,
