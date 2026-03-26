@@ -1,0 +1,23 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "mcp__github__create_or_update_file",
+      "mcp__github__push_files",
+      "mcp__github__create_or_update_files",
+      "mcp__github__delete_file"
+    ]
+  }
+}
