@@ -26,6 +26,26 @@ describe("BudgetExhaustedError", () => {
     const err = new BudgetExhaustedError(0);
     expect(err).toBeInstanceOf(Error);
   });
+
+  it("includes tenant and budgetId when provided", () => {
+    const err = new BudgetExhaustedError(0, { tenant: "acme", budgetId: "my-app" });
+    expect(err.tenant).toBe("acme");
+    expect(err.budgetId).toBe("my-app");
+    expect(err.message).toContain("tenant=acme");
+    expect(err.message).toContain("budget=my-app");
+  });
+
+  it("includes actionable hint in message", () => {
+    const err = new BudgetExhaustedError(0);
+    expect(err.message).toContain("increase the budget via the Cycles API");
+  });
+
+  it("works without opts", () => {
+    const err = new BudgetExhaustedError(500);
+    expect(err.tenant).toBeUndefined();
+    expect(err.budgetId).toBeUndefined();
+    expect(err.remaining).toBe(500);
+  });
 });
 
 describe("ToolBudgetDeniedError", () => {

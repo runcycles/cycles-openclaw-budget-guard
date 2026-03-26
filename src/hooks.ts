@@ -266,7 +266,7 @@ export async function beforeModelResolve(
     // Gap 13: Apply low-budget strategies
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
       if (config.failClosed) {
-        throw new BudgetExhaustedError(snapshot.remaining);
+        throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
     }
@@ -277,7 +277,7 @@ export async function beforeModelResolve(
       logger.warn(
         `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
       );
-      throw new BudgetExhaustedError(snapshot.remaining);
+      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
       `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
@@ -301,7 +301,7 @@ export async function beforeModelResolve(
       logger.warn(
         `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
       );
-      throw new BudgetExhaustedError(snapshot.remaining);
+      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
       `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
