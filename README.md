@@ -65,6 +65,8 @@ openclaw plugins enable cycles-openclaw-budget-guard
 
 ### 3. Add minimal configuration
 
+Add the following to your OpenClaw config file (typically `openclaw.json` or `openclaw.config.json`):
+
 ```json
 {
   "plugins": {
