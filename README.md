@@ -72,9 +72,11 @@ Add the following to your OpenClaw config file (typically `openclaw.json` or `op
   "plugins": {
     "entries": {
       "cycles-openclaw-budget-guard": {
-        "cyclesBaseUrl": "https://cycles.example.com",
-        "cyclesApiKey": "cyc_your_api_key_here",
-        "tenant": "my-org"
+        "config": {
+          "cyclesBaseUrl": "https://cycles.example.com",
+          "cyclesApiKey": "cyc_your_api_key_here",
+          "tenant": "my-org"
+        }
       }
     }
   }
@@ -92,7 +94,7 @@ export CYCLES_BASE_URL="https://cycles.example.com"
 export CYCLES_API_KEY="cyc_your_api_key_here"
 ```
 
-Then your config only needs `"tenant": "my-org"`.
+Then your config only needs `"config": { "tenant": "my-org" }`.
 
 ### 5. (Optional) Try dry-run mode
 
@@ -103,11 +105,13 @@ To test without a live Cycles server:
   "plugins": {
     "entries": {
       "cycles-openclaw-budget-guard": {
-        "tenant": "my-org",
-        "cyclesBaseUrl": "http://unused",
-        "cyclesApiKey": "unused",
-        "dryRun": true,
-        "dryRunBudget": 100000000
+        "config": {
+          "tenant": "my-org",
+          "cyclesBaseUrl": "http://unused",
+          "cyclesApiKey": "unused",
+          "dryRun": true,
+          "dryRunBudget": 100000000
+        }
       }
     }
   }
@@ -121,38 +125,40 @@ To test without a live Cycles server:
   "plugins": {
     "entries": {
       "cycles-openclaw-budget-guard": {
-        "enabled": true,
-        "cyclesBaseUrl": "https://cycles.example.com",
-        "cyclesApiKey": "cyc_your_api_key_here",
-        "tenant": "my-org",
-        "budgetId": "my-app",
-        "currency": "USD_MICROCENTS",
-        "lowBudgetThreshold": 10000000,
-        "exhaustedThreshold": 0,
-        "modelFallbacks": {
-          "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
-          "gpt-4o": "gpt-4o-mini"
-        },
-        "modelBaseCosts": {
-          "claude-opus-4-20250514": 1500000,
-          "claude-sonnet-4-20250514": 300000,
-          "gpt-4o": 1000000,
-          "gpt-4o-mini": 100000
-        },
-        "toolBaseCosts": {
-          "web_search": 500000,
-          "code_execution": 1000000
-        },
-        "injectPromptBudgetHint": true,
-        "maxPromptHintChars": 200,
-        "failClosed": true,
-        "logLevel": "info",
-        "reservationTtlMs": 60000,
-        "overagePolicy": "ALLOW_IF_AVAILABLE",
-        "lowBudgetStrategies": ["downgrade_model"],
-        "maxTokensWhenLow": 1024,
-        "retryOnDeny": false,
-        "dryRun": false
+        "config": {
+          "enabled": true,
+          "cyclesBaseUrl": "https://cycles.example.com",
+          "cyclesApiKey": "cyc_your_api_key_here",
+          "tenant": "my-org",
+          "budgetId": "my-app",
+          "currency": "USD_MICROCENTS",
+          "lowBudgetThreshold": 10000000,
+          "exhaustedThreshold": 0,
+          "modelFallbacks": {
+            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
+            "gpt-4o": "gpt-4o-mini"
+          },
+          "modelBaseCosts": {
+            "claude-opus-4-20250514": 1500000,
+            "claude-sonnet-4-20250514": 300000,
+            "gpt-4o": 1000000,
+            "gpt-4o-mini": 100000
+          },
+          "toolBaseCosts": {
+            "web_search": 500000,
+            "code_execution": 1000000
+          },
+          "injectPromptBudgetHint": true,
+          "maxPromptHintChars": 200,
+          "failClosed": true,
+          "logLevel": "info",
+          "reservationTtlMs": 60000,
+          "overagePolicy": "ALLOW_IF_AVAILABLE",
+          "lowBudgetStrategies": ["downgrade_model"],
+          "maxTokensWhenLow": 1024,
+          "retryOnDeny": false,
+          "dryRun": false
+        }
       }
     }
   }
