@@ -148,6 +148,10 @@ To test without a live Cycles server:
             "web_search": 500000,
             "code_execution": 1000000
           },
+          "toolCallLimits": {
+            "send_email": 10,
+            "deploy": 3
+          },
           "injectPromptBudgetHint": true,
           "maxPromptHintChars": 200,
           "failClosed": true,
@@ -210,6 +214,7 @@ To test without a live Cycles server:
 | `toolCurrencies` | object | — | Map: tool name → currency override |
 | `toolReservationTtls` | object | — | Map: tool name → TTL override in ms |
 | `toolOveragePolicies` | object | — | Map: tool name → overage policy override |
+| `toolCallLimits` | object | — | Map: tool name → max invocations per session (e.g. `{"send_email": 10}`) |
 
 ### Prompt Hints
 
@@ -372,6 +377,21 @@ Control which tools can be called using glob-style patterns:
 
 - Blocklist takes precedence over allowlist
 - Supports exact names and `*` wildcards (prefix: `code_*`, suffix: `*_tool`, all: `*`)
+
+### Tool Call Limits
+
+Cap the number of times a specific tool can be invoked per session. Useful for consequential actions like sending emails or triggering deployments:
+
+```json
+{
+  "toolCallLimits": {
+    "send_email": 10,
+    "deploy": 3
+  }
+}
+```
+
+Once a tool reaches its limit, further calls are blocked with a descriptive reason. Tools without a limit are unrestricted. Limits reset on each new agent session.
 
 ### Budget Transition Alerts
 
