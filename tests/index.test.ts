@@ -183,6 +183,70 @@ describe("plugin entrypoint", () => {
     expect(api.on).not.toHaveBeenCalled();
   });
 
+  it("handles non-Error throws in catch path", () => {
+    mockResolveConfig.mockImplementation(() => {
+      throw "string error";
+    });
+
+    const logger = makeLogger();
+    const api = {
+      config: {},
+      logger,
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("string error"),
+    );
+    expect(api.on).not.toHaveBeenCalled();
+  });
+
+  it("logs startup summary with all optional config fields", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      budgetId: "my-app",
+      modelFallbacks: { "gpt-4o": "gpt-4o-mini" },
+      toolBaseCosts: { web_search: 500000 },
+      toolAllowlist: ["web_search", "code_*"],
+      toolBlocklist: ["dangerous_*"],
+    }));
+
+    const logger = makeLogger();
+    const api = {
+      config: {},
+      logger,
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(infoCall).toContain("v0.3.4 starting");
+    expect(infoCall).toContain("tenant: test-tenant");
+    expect(infoCall).toContain("cyclesApiKey: ****-key");
+    expect(infoCall).toContain("budgetId: my-app");
+    expect(infoCall).toContain("modelFallbacks: gpt-4o");
+    expect(infoCall).toContain("toolBaseCosts: web_search");
+    expect(infoCall).toContain("toolAllowlist: web_search, code_*");
+    expect(infoCall).toContain("toolBlocklist: dangerous_*");
+  });
+
+  it("masks empty API key as '(not set)' in startup summary", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      cyclesApiKey: "",
+    }));
+
+    const logger = makeLogger();
+    const api = {
+      config: {},
+      logger,
+      on: vi.fn(),
+    };
+
+    registerPlugin(api);
+    const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(infoCall).toContain("cyclesApiKey: (not set)");
+  });
+
   it("calls initHooks with resolved config and api.logger", () => {
     const resolvedConfig = makeConfig();
     mockResolveConfig.mockReturnValue(resolvedConfig);
