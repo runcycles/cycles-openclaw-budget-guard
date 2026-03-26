@@ -77,6 +77,12 @@ export function makeConfig(
     parentBudgetId: undefined,
     // Tool call limits
     toolCallLimits: undefined,
+    // v0.5.0
+    modelCostEstimator: undefined,
+    metricsEmitter: undefined,
+    aggressiveCacheInvalidation: true,
+    otlpMetricsEndpoint: undefined,
+    otlpMetricsHeaders: undefined,
     ...overrides,
   };
 }

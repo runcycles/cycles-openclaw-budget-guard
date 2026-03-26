@@ -14,12 +14,14 @@ import type {
   BudgetLevel,
   BudgetSnapshot,
   HookContext,
+  MetricsEmitter,
   ModelResolveEvent,
   ModelResolveResult,
   OpenClawLogger,
   PromptBuildEvent,
   PromptBuildResult,
   SessionSummary,
+  StandardMetrics,
   ToolCallEvent,
   ToolCallResult,
   ToolResultEvent,
@@ -87,6 +89,19 @@ let sessionStartedAt = 0;
 let resolvedUserId: string | undefined;
 let resolvedSessionId: string | undefined;
 
+/** v0.5.0: Pending model reservation for reserve-then-commit pattern. */
+let pendingModelReservation: ActiveReservation | undefined;
+let pendingModelName: string | undefined;
+
+/** v0.5.0: Turn counter for model cost estimator context. */
+let turnIndex = 0;
+
+/** v0.5.0: Metrics emitter reference (from config or OTLP auto-creation). */
+let metricsEmitter: MetricsEmitter | undefined;
+
+/** v0.5.0: Base tags for all metrics. */
+let baseTags: Record<string, string> = {};
+
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -126,6 +141,16 @@ export function initHooks(
   sessionStartedAt = Date.now();
   resolvedUserId = config.userId;
   resolvedSessionId = config.sessionId;
+
+  // v0.5.0: Reset model reservation tracking
+  pendingModelReservation = undefined;
+  pendingModelName = undefined;
+  turnIndex = 0;
+
+  // v0.5.0: Set up metrics emitter
+  metricsEmitter = config.metricsEmitter;
+  baseTags = { tenant: config.tenant };
+  if (config.budgetId) baseTags.budgetId = config.budgetId;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +185,13 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
     }
   }
   lastKnownLevel = cachedSnapshot.level;
+
+  // v0.5.0: Emit budget gauge metrics
+  emitGauge("cycles.budget.remaining", cachedSnapshot.remaining, { currency: config.currency });
+  emitGauge("cycles.budget.reserved", cachedSnapshot.reserved);
+  emitGauge("cycles.budget.spent", cachedSnapshot.spent);
+  const levelValue = cachedSnapshot.level === "healthy" ? 0 : cachedSnapshot.level === "low" ? 1 : 2;
+  emitGauge("cycles.budget.level", levelValue, { level: cachedSnapshot.level });
 
   return cachedSnapshot;
 }
@@ -221,6 +253,61 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** v0.5.0: Safe metrics emission (never throws). */
+function emitGauge(name: string, value: number, tags?: Record<string, string>): void {
+  if (!metricsEmitter) return;
+  try { metricsEmitter.gauge(name, value, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+}
+function emitCounter(name: string, delta: number, tags?: Record<string, string>): void {
+  if (!metricsEmitter) return;
+  try { metricsEmitter.counter(name, delta, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+}
+function emitHistogram(name: string, value: number, tags?: Record<string, string>): void {
+  if (!metricsEmitter) return;
+  try { metricsEmitter.histogram(name, value, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+}
+
+/** v0.5.0: Commit pending model reservation from previous turn. */
+async function commitPendingModelReservation(): Promise<void> {
+  if (!pendingModelReservation) return;
+
+  const reservation = pendingModelReservation;
+  const modelName = pendingModelName ?? "unknown";
+  pendingModelReservation = undefined;
+  pendingModelName = undefined;
+
+  let actual = reservation.estimate;
+  if (config.modelCostEstimator) {
+    try {
+      const computed = config.modelCostEstimator({
+        model: modelName,
+        estimatedCost: reservation.estimate,
+        turnIndex: turnIndex - 1,
+      });
+      if (computed !== undefined) actual = computed;
+    } catch (err) {
+      logger.warn(`modelCostEstimator threw for model=${modelName}, using estimate:`, err);
+    }
+  }
+
+  const unit = reservation.currency ?? config.currency;
+  const metrics: StandardMetrics = { model_version: modelName };
+  await commitUsage(client, reservation.reservationId, actual, unit, logger, metrics);
+  logger.debug(`Committed model reservation for ${modelName}: ${actual} ${unit}`);
+
+  trackCost(`model:${modelName}`, actual);
+  totalModelCost += actual;
+  totalModelCalls++;
+
+  emitCounter("cycles.reservation.committed", 1, { kind: "model", name: modelName });
+  emitHistogram("cycles.reservation.cost", actual, { kind: "model", name: modelName });
+
+  invalidateSnapshotCache();
+  if (config.aggressiveCacheInvalidation) {
+    await getSnapshot();
+  }
+}
+
 const DEFAULT_TOOL_COST = 100_000;
 const DEFAULT_MODEL_COST = 500_000;
 
@@ -255,6 +342,7 @@ export async function beforeModelResolve(
           logger.info(
             `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${candidate}`,
           );
+          emitCounter("cycles.model.downgrade", 1, { from: event.model, to: candidate });
           resolvedModel = candidate;
           break;
         }
@@ -301,25 +389,41 @@ export async function beforeModelResolve(
       logger.warn(
         `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
       );
+      emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: result.reasonCode ?? "denied" });
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
       `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
     );
+    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: "denied_fail_open" });
   } else {
     totalReservationsMade++;
+    emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
+
+    // v0.5.0: Commit any pending model reservation from previous turn first
+    await commitPendingModelReservation();
 
     if (result.reservationId) {
-      // Commit immediately — no after_model_resolve hook exists in OpenClaw,
-      // so model cost is always estimated (not reconciled with actual tokens).
-      await commitUsage(client, result.reservationId, modelCost, modelCurrency, logger);
+      // v0.5.0: Reserve-then-commit pattern — hold the reservation open.
+      // It will be committed in the next beforePromptBuild or at agentEnd,
+      // allowing modelCostEstimator to reconcile the cost.
+      pendingModelReservation = {
+        reservationId: result.reservationId,
+        estimate: modelCost,
+        toolName: resolvedModel,
+        createdAt: Date.now(),
+        kind: "model",
+        currency: modelCurrency,
+      };
+      pendingModelName = resolvedModel;
+    } else {
+      // No reservation ID (e.g. dry-run with DENY) — track immediately
+      trackCost(`model:${resolvedModel}`, modelCost);
+      totalModelCost += modelCost;
+      totalModelCalls++;
     }
 
-    // Gap 6 & 9: Track model cost
-    trackCost(`model:${resolvedModel}`, modelCost);
-    totalModelCost += modelCost;
-    totalModelCalls++;
-
+    turnIndex++;
     invalidateSnapshotCache();
   }
 
@@ -337,6 +441,9 @@ export async function beforePromptBuild(
   _event: PromptBuildEvent,
   ctx: HookContext,
 ): Promise<PromptBuildResult | undefined> {
+  // v0.5.0: Commit pending model reservation from previous turn
+  await commitPendingModelReservation();
+
   if (!config.injectPromptBudgetHint) return undefined;
 
   const snapshot = await getSnapshot(ctx);
@@ -382,6 +489,7 @@ export async function beforeToolCall(
   const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
   if (!permission.permitted) {
     logger.warn(`Tool "${toolName}" blocked by access list: ${permission.reason}`);
+    emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "access_list" });
     return { block: true, blockReason: permission.reason };
   }
 
@@ -392,6 +500,7 @@ export async function beforeToolCall(
       const count = toolCallCounts.get(toolName) ?? 0;
       if (count >= limit) {
         logger.warn(`Tool "${toolName}" blocked: call limit ${limit} reached (${count} calls)`);
+        emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "call_limit" });
         return {
           block: true,
           blockReason: `Tool "${toolName}" exceeded session call limit (${limit})`,
@@ -423,6 +532,7 @@ export async function beforeToolCall(
       logger.warn(
         `Tool "${toolName}" blocked: cost ${estimate} exceeds expensive threshold ${threshold}`,
       );
+      emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "expensive" });
       return {
         block: true,
         blockReason: `Tool "${toolName}" disabled during low budget (cost ${estimate} exceeds threshold ${threshold})`,
@@ -437,6 +547,7 @@ export async function beforeToolCall(
     remainingCallsAllowed <= 0
   ) {
     logger.warn(`Tool "${toolName}" blocked: remaining call limit reached`);
+    emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "remaining_calls" });
     return {
       block: true,
       blockReason: `Tool call limit reached during low budget (max ${config.maxRemainingCallsWhenLow} calls)`,
@@ -503,6 +614,7 @@ export async function beforeToolCall(
     logger.warn(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
+    emitCounter("cycles.reservation.denied", 1, { kind: "tool", name: toolName, reason: result.reasonCode ?? "denied" });
     return {
       block: true,
       blockReason: `Budget reservation denied for tool "${toolName}": ${result.reasonCode ?? "budget limit reached"}`,
@@ -510,6 +622,7 @@ export async function beforeToolCall(
   }
 
   totalReservationsMade++;
+  emitCounter("cycles.reservation.created", 1, { kind: "tool", name: toolName });
 
   if (result.reservationId) {
     activeReservations.set(event.toolCallId, {
@@ -579,7 +692,16 @@ export async function afterToolCall(
   totalToolCost += actual;
   totalToolCalls++;
 
+  // v0.5.0: Emit commit metrics
+  emitCounter("cycles.reservation.committed", 1, { kind: "tool", name: reservation.toolName });
+  emitHistogram("cycles.reservation.cost", actual, { kind: "tool", name: reservation.toolName });
+
   invalidateSnapshotCache();
+
+  // v0.5.0: Aggressive cache invalidation — proactively refetch after mutation
+  if (config.aggressiveCacheInvalidation) {
+    await getSnapshot();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +712,9 @@ export async function agentEnd(
   _event: AgentEndEvent,
   ctx: HookContext,
 ): Promise<void> {
+  // v0.5.0: Commit any pending model reservation from the last turn
+  await commitPendingModelReservation();
+
   // Release any orphaned reservations
   if (activeReservations.size > 0) {
     logger.warn(
@@ -664,4 +789,10 @@ export async function agentEnd(
   if (config.analyticsWebhookUrl) {
     fireWebhook(config.analyticsWebhookUrl, summary);
   }
+
+  // v0.5.0: Emit session-level metrics
+  const durationMs = summary.endedAt - summary.startedAt;
+  emitHistogram("cycles.session.duration_ms", durationMs);
+  const totalCost = [...costBreakdown.values()].reduce((sum, e) => sum + e.totalCost, 0);
+  emitHistogram("cycles.session.total_cost", totalCost);
 }

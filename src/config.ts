@@ -165,6 +165,19 @@ export function resolveConfig(
 
     // Tool call limits (per-tool invocation caps per session)
     toolCallLimits,
+
+    // v0.5.0: Model cost reconciliation
+    modelCostEstimator: asFunction(raw.modelCostEstimator) as BudgetGuardConfig["modelCostEstimator"],
+
+    // v0.5.0: Metrics emitter
+    metricsEmitter: asFunction(raw.metricsEmitter) ? (raw.metricsEmitter as BudgetGuardConfig["metricsEmitter"]) : undefined,
+
+    // v0.5.0: Aggressive cache invalidation
+    aggressiveCacheInvalidation: asBool(raw.aggressiveCacheInvalidation) ?? true,
+
+    // v0.5.0: OTLP metrics
+    otlpMetricsEndpoint: asString(raw.otlpMetricsEndpoint),
+    otlpMetricsHeaders: asStringRecord(raw.otlpMetricsHeaders),
   };
 }
 

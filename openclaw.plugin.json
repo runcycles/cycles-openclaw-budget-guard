@@ -1,7 +1,7 @@
 {
   "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -215,6 +215,20 @@
         "type": "object",
         "additionalProperties": { "type": "number" },
         "description": "Map from tool name to maximum invocations allowed per session (e.g. {\"send_email\": 10})."
+      },
+      "aggressiveCacheInvalidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Proactively refetch budget snapshot after every commit/release for fresher data."
+      },
+      "otlpMetricsEndpoint": {
+        "type": "string",
+        "description": "OTLP HTTP endpoint for metrics export (e.g. http://localhost:4318/v1/metrics). Auto-creates a MetricsEmitter if set."
+      },
+      "otlpMetricsHeaders": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Custom HTTP headers for OTLP metrics requests (e.g. authorization tokens)."
       }
     },
     "required": []

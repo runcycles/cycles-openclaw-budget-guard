@@ -14,7 +14,7 @@ import {
   type ReservationCreateResponse,
 } from "runcycles";
 
-import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger } from "./types.js";
+import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger, StandardMetrics } from "./types.js";
 import { classifyBudget } from "./budget.js";
 
 // ---------------------------------------------------------------------------
@@ -217,12 +217,16 @@ export async function commitUsage(
   actual: number,
   unit: string,
   logger: OpenClawLogger,
+  metrics?: StandardMetrics,
 ): Promise<void> {
   try {
     const body: Record<string, unknown> = {
       idempotency_key: randomUUID(),
       actual: { unit, amount: actual },
     };
+    if (metrics) {
+      body.metrics = metrics;
+    }
     const response = await client.commitReservation(reservationId, body);
     if (!response.isSuccess) {
       logger.warn(

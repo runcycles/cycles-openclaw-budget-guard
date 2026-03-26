@@ -80,6 +80,19 @@ export interface BudgetGuardConfig {
 
   // Per-tool invocation limits per session
   toolCallLimits?: Record<string, number>;
+
+  // v0.5.0 — Model cost reconciliation
+  modelCostEstimator?: (context: ModelCostEstimatorContext) => number | undefined;
+
+  // v0.5.0 — Metrics emitter for observability pipelines
+  metricsEmitter?: MetricsEmitter;
+
+  // v0.5.0 — Aggressive cache invalidation (refetch after every mutation)
+  aggressiveCacheInvalidation: boolean;
+
+  // v0.5.0 — OTLP metrics endpoint (auto-creates emitter if metricsEmitter not set)
+  otlpMetricsEndpoint?: string;
+  otlpMetricsHeaders?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +134,38 @@ export interface CostEstimatorContext {
   estimate: number;
   durationMs?: number;
   result?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Model cost estimator context (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface ModelCostEstimatorContext {
+  model: string;
+  estimatedCost: number;
+  turnIndex: number;
+}
+
+// ---------------------------------------------------------------------------
+// StandardMetrics for Cycles commit payloads (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface StandardMetrics {
+  tokens_input?: number;
+  tokens_output?: number;
+  latency_ms?: number;
+  model_version?: string;
+  custom?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// MetricsEmitter for observability pipelines (v0.5.0)
+// ---------------------------------------------------------------------------
+
+export interface MetricsEmitter {
+  gauge(name: string, value: number, tags?: Record<string, string>): void;
+  counter(name: string, delta: number, tags?: Record<string, string>): void;
+  histogram(name: string, value: number, tags?: Record<string, string>): void;
 }
 
 // ---------------------------------------------------------------------------
