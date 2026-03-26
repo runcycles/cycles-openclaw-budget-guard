@@ -220,7 +220,7 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(infoCall).toContain("v0.3.4 starting");
+    expect(infoCall).toContain("v0.4.0 starting");
     expect(infoCall).toContain("tenant: test-tenant");
     expect(infoCall).toContain("cyclesApiKey: ****-key");
     expect(infoCall).toContain("budgetId: my-app");

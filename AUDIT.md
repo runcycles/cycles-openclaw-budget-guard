@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-26
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.3.4
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.4.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -27,11 +27,11 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.3.4 adds critical install/config-loading fixes and startup diagnostics.
+**Overall: Plugin is contract-conformant and production-ready.** All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics.
 
 ---
 
-## v0.3.4 Changes (2026-03-26)
+## v0.4.0 Changes (2026-03-26)
 
 ### Critical fixes
 
