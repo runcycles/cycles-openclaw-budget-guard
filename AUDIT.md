@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-26
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.3.0
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.4.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
