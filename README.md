@@ -412,6 +412,9 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 
 ## Troubleshooting
 
+**"Skipping registration" warning during install**
+- This is normal. OpenClaw loads the plugin during install before your config is written. The plugin detects the missing config, logs a warning, and skips registration. After you add your config and restart the gateway, the plugin will register normally.
+
 **Plugin not loading**
 - Verify the plugin is enabled: `openclaw plugins list`
 - Check that `openclaw.plugin.json` is included in the installed package
