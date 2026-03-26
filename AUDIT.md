@@ -63,10 +63,10 @@
 
 | Metric | v0.5.0 | v0.6.0 |
 |---|---|---|
-| Test count | 271 | 283 |
-| Statement coverage | 99.67% | 98.35% |
-| Branch coverage | 98.97% | 96.91% |
-| Line coverage | 100% | 98.95% |
+| Test count | 271 | 289 |
+| Statement coverage | 99.67% | 99.45% |
+| Branch coverage | 98.97% | 97.95% |
+| Line coverage | 100% | 100% |
 
 ---
 

@@ -407,4 +407,36 @@ describe("resolveConfig", () => {
     expect(result.otlpMetricsEndpoint).toBe("http://localhost:4318/v1/metrics");
     expect(result.otlpMetricsHeaders).toEqual({ "X-Api-Key": "secret" });
   });
+
+  it("resolves custom retryableStatusCodes array", () => {
+    const result = resolveConfig({
+      ...minValid,
+      retryableStatusCodes: [429, 502, 503],
+    });
+    expect(result.retryableStatusCodes).toEqual([429, 502, 503]);
+  });
+
+  it("falls back to default retryableStatusCodes when not provided", () => {
+    const result = resolveConfig(minValid);
+    expect(result.retryableStatusCodes).toEqual([429, 503, 504]);
+  });
+
+  it("ignores invalid retryableStatusCodes (non-array)", () => {
+    const result = resolveConfig({
+      ...minValid,
+      retryableStatusCodes: "429",
+    });
+    expect(result.retryableStatusCodes).toEqual([429, 503, 504]);
+  });
+
+  it("resolves v0.6.0 config defaults", () => {
+    const result = resolveConfig(minValid);
+    expect(result.heartbeatIntervalMs).toBe(30_000);
+    expect(result.transientRetryMaxAttempts).toBe(2);
+    expect(result.transientRetryBaseDelayMs).toBe(500);
+    expect(result.burnRateWindowMs).toBe(60_000);
+    expect(result.burnRateAlertThreshold).toBe(3.0);
+    expect(result.enableEventLog).toBe(false);
+    expect(result.exhaustionWarningThresholdMs).toBe(120_000);
+  });
 });
