@@ -47,8 +47,34 @@ export default function (api: OpenClawPluginApi): void {
   }
 
   if (!config.enabled) {
+    api.logger.info("[cycles-budget-guard] Plugin disabled via config");
     return;
   }
+
+  // Log resolved config summary on startup so operators can verify settings.
+  const maskedKey = config.cyclesApiKey
+    ? `****${config.cyclesApiKey.slice(-4)}`
+    : "(not set)";
+  const lines = [
+    `[cycles-budget-guard] v0.3.4 starting`,
+    `  tenant: ${config.tenant}`,
+    `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
+    `  cyclesApiKey: ${maskedKey}`,
+    `  currency: ${config.currency}`,
+    `  failClosed: ${config.failClosed}`,
+    `  dryRun: ${config.dryRun}`,
+    `  logLevel: ${config.logLevel}`,
+    `  lowBudgetThreshold: ${config.lowBudgetThreshold}`,
+    `  exhaustedThreshold: ${config.exhaustedThreshold}`,
+  ];
+  if (config.budgetId) lines.push(`  budgetId: ${config.budgetId}`);
+  if (Object.keys(config.modelFallbacks).length > 0)
+    lines.push(`  modelFallbacks: ${Object.keys(config.modelFallbacks).join(", ")}`);
+  if (Object.keys(config.toolBaseCosts).length > 0)
+    lines.push(`  toolBaseCosts: ${Object.keys(config.toolBaseCosts).join(", ")}`);
+  if (config.toolAllowlist) lines.push(`  toolAllowlist: ${config.toolAllowlist.join(", ")}`);
+  if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
+  api.logger.info(lines.join("\n"));
 
   initHooks(config, api.logger);
 
