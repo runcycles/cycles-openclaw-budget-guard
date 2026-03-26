@@ -27,7 +27,40 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected.
+**Overall: Plugin is contract-conformant and production-ready.** All 44 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.3.4 adds critical install/config-loading fixes and startup diagnostics.
+
+---
+
+## v0.3.4 Changes (2026-03-26)
+
+### Critical fixes
+
+| Issue | Root Cause | Fix | Location |
+|---|---|---|---|
+| Install crashes with "must have required property 'tenant'" | `configSchema.required: ["tenant"]` validated during `persistPluginInstall` before user can configure | Removed `tenant` from `required` array; runtime validation in `config.ts` still enforces it | `openclaw.plugin.json:215` |
+| Plugin ID mismatch warning on every load | Manifest `id` was `cycles-openclaw-budget-guard` but OpenClaw derives `openclaw-budget-guard` from npm scope strip | Changed manifest `id` to `openclaw-budget-guard` | `openclaw.plugin.json:2` |
+| Plugin never reads config — "tenant is required" even when configured | Plugin read `api.config` (full system config) instead of `api.pluginConfig` (plugin-specific config from `plugins.entries.<id>.config`) | Use `api.pluginConfig ?? api.config` with fallback for backwards compatibility | `src/index.ts:36` |
+| Install shows noisy error before config is written | `resolveConfig()` throws during install when OpenClaw loads the plugin before config exists | Wrapped in try/catch; logs warning and skips registration gracefully | `src/index.ts:40-48` |
+
+### New features
+
+| Feature | Description | Location |
+|---|---|---|
+| Startup config summary | Logs resolved config (tenant, base URL, masked API key, key settings) on registration for operator verification | `src/index.ts:55-75` |
+
+### Type changes
+
+| Change | Details | Location |
+|---|---|---|
+| Added `pluginConfig` to `OpenClawPluginApi` | Optional `Record<string, unknown>` for OpenClaw SDK `api.pluginConfig` | `src/types.ts:189` |
+
+### Documentation fixes
+
+- All README and docs config examples now use correct `plugins.entries.<id>.config.{...}` structure
+- Plugin ID updated from `cycles-openclaw-budget-guard` to `openclaw-budget-guard` in all config keys and CLI commands
+- Default `cyclesBaseUrl` changed to `http://localhost:7878` (no public default)
+- Config file name (`openclaw.json` / `openclaw.config.json`) specified in Quick Start
+- Troubleshooting section added for "Skipping registration" warning during install
 
 ---
 
@@ -47,7 +80,7 @@ All files    |   99.76 |    99.16 |   98.33 |    100
   types.ts   |     100 |      100 |     100 |    100
 ```
 
-200 tests across 8 test files. **100% line coverage, 99% branch coverage.**
+202 tests across 8 test files. **100% line coverage, 99% branch coverage.**
 
 The 3 remaining uncovered branches are unreachable by design: `ctx.metadata` is always provided by OpenClaw, `reservation.currency` is always set at creation, and `shouldLog("error")` is always true since error is the highest log level.
 
