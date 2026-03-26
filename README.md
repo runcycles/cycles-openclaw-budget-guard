@@ -150,6 +150,46 @@ To test without a live Cycles server:
 }
 ```
 
+### 6. Verify it's working
+
+After restarting OpenClaw, check the logs for:
+
+```
+[cycles-budget-guard] v0.6.0 starting
+  tenant: my-org
+  cyclesBaseUrl: http://localhost:7878
+  ...
+```
+
+Run your agent and look for budget activity:
+
+```
+[cycles-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
+```
+
+If you see this, the plugin is actively checking budget on every model and tool call.
+
+## Understanding the cost model
+
+The plugin uses a simple model: every model call and tool call reserves a fixed cost from the budget.
+
+**Currency.** The default is `USD_MICROCENTS` — 1 unit = $0.00001 (one hundred-thousandth of a dollar). So:
+
+| Amount (units) | USD equivalent |
+|----------------|---------------|
+| 100,000 | $0.001 (0.1 cents) |
+| 1,000,000 | $0.01 (1 cent) |
+| 10,000,000 | $0.10 (10 cents) |
+| 100,000,000 | $1.00 |
+
+**Example.** With a $5 budget (500,000,000 units):
+- `claude-opus` at 1,500,000/call = ~333 calls before exhaustion
+- `claude-sonnet` at 300,000/call = ~1,666 calls
+- `web_search` at 500,000/call = ~1,000 calls
+- `lowBudgetThreshold: 10000000` triggers model downgrade when $0.10 remains
+
+**Setting toolBaseCosts.** Start with the default (100,000 units per call). After your first session, check the `unconfiguredTools` list in the session summary — it tells you which tools need explicit costs. For tools that call external APIs, estimate higher (500K-1M). For lightweight tools, estimate lower (10K-50K).
+
 ## Full Configuration Example
 
 ```json
@@ -290,6 +330,44 @@ Aggressive cost savings. Low thresholds, model downgrade with token limits, expe
     }
   }
 }
+```
+
+## Configure for your use case
+
+Most users only need 5-10 config properties. Start with what you need:
+
+**I just want to stop runaway agents** (3 required fields only):
+```json
+{ "tenant": "my-org", "cyclesBaseUrl": "...", "cyclesApiKey": "..." }
+```
+The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block agents that exhaust their budget and warn when it gets low.
+
+**I want cost-aware model selection** — add:
+```json
+{
+  "modelFallbacks": { "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] },
+  "modelBaseCosts": { "claude-opus-4-20250514": 1500000, "claude-sonnet-4-20250514": 300000, "claude-haiku-4-5-20251001": 100000 }
+}
+```
+
+**I want to cap dangerous tool calls** — add:
+```json
+{ "toolCallLimits": { "send_email": 10, "deploy": 3, "delete_data": 1 } }
+```
+
+**I want observability** — add:
+```json
+{ "otlpMetricsEndpoint": "http://localhost:4318/v1/metrics" }
+```
+
+**I want to catch runaway loops** — add:
+```json
+{ "burnRateAlertThreshold": 3.0, "onBurnRateAnomaly": "..." }
+```
+
+**I want full debugging** — add:
+```json
+{ "enableEventLog": true, "logLevel": "debug" }
 ```
 
 ## Config Reference
@@ -616,6 +694,21 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 **Model not being downgraded**
 - The exact model name must match a key in `modelFallbacks`
 - Check model costs in `modelBaseCosts` — fallback must be cheaper than remaining budget
+
+## Production checklist
+
+Before deploying to production:
+
+- [ ] API key stored as env var (`CYCLES_API_KEY`), not in config file
+- [ ] `failClosed: true` (default — blocks on exhausted budget)
+- [ ] `dryRun: false` (default — uses real Cycles server)
+- [ ] `modelBaseCosts` set for each model your agent uses
+- [ ] `toolBaseCosts` set for at least your top 5 tools by usage
+- [ ] `toolCallLimits` set for dangerous tools (`send_email`, `deploy`, etc.)
+- [ ] `lowBudgetThreshold` calibrated for your session duration (default 10M = $0.10)
+- [ ] Budget transition monitoring via `onBudgetTransition` callback or `budgetTransitionWebhookUrl`
+- [ ] Session analytics via `onSessionEnd` callback or `analyticsWebhookUrl`
+- [ ] Run one test session with `logLevel: "debug"` and `enableEventLog: true` to verify costs
 
 ## Known Limitations
 
