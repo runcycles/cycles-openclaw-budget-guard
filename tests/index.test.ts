@@ -10,6 +10,7 @@ const {
   mockBeforeToolCall,
   mockAfterToolCall,
   mockAgentEnd,
+  mockCreateOtlpEmitter,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
   mockInitHooks: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockBeforeToolCall: vi.fn(),
   mockAfterToolCall: vi.fn(),
   mockAgentEnd: vi.fn(),
+  mockCreateOtlpEmitter: vi.fn(() => ({ gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() })),
 }));
 
 vi.mock("../src/config.js", () => ({
@@ -31,6 +33,10 @@ vi.mock("../src/hooks.js", () => ({
   beforeToolCall: mockBeforeToolCall,
   afterToolCall: mockAfterToolCall,
   agentEnd: mockAgentEnd,
+}));
+
+vi.mock("../src/metrics-otlp.js", () => ({
+  createOtlpEmitter: (...args: unknown[]) => mockCreateOtlpEmitter(...args),
 }));
 
 import registerPlugin, {
@@ -317,5 +323,60 @@ describe("plugin entrypoint", () => {
     registerPlugin(api);
     const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(infoCall).toContain("toolCallLimits: send_email=10, deploy=3");
+  });
+
+  it("auto-creates OTLP emitter when otlpMetricsEndpoint is set and no metricsEmitter", () => {
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+      otlpMetricsEndpoint: "http://localhost:4318/v1/metrics",
+      otlpMetricsHeaders: { "X-Api-Key": "secret" },
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    expect(mockCreateOtlpEmitter).toHaveBeenCalledWith({
+      endpoint: "http://localhost:4318/v1/metrics",
+      headers: { "X-Api-Key": "secret" },
+    });
+    expect(config.metricsEmitter).toBeDefined();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("OTLP metrics emitter configured"),
+    );
+  });
+
+  it("does not create OTLP emitter when metricsEmitter is already set", () => {
+    const existingEmitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+      otlpMetricsEndpoint: "http://localhost:4318/v1/metrics",
+      metricsEmitter: existingEmitter,
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    expect(mockCreateOtlpEmitter).not.toHaveBeenCalled();
+    expect(config.metricsEmitter).toBe(existingEmitter);
+  });
+
+  it("does not create OTLP emitter when no endpoint configured", () => {
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    expect(mockCreateOtlpEmitter).not.toHaveBeenCalled();
   });
 });

@@ -350,4 +350,61 @@ describe("resolveConfig", () => {
       }),
     ).toThrow('toolCallLimits["send_email"] = 0 must be at least 1');
   });
+
+  it("resolves metricsEmitter when provided as a function-like object", () => {
+    const emitter = {
+      gauge: () => {},
+      counter: () => {},
+      histogram: () => {},
+    };
+    const result = resolveConfig({
+      ...minValid,
+      // metricsEmitter is a callback-only option, not JSON-serializable.
+      // When passed as a non-function object it should be undefined.
+      metricsEmitter: emitter,
+    });
+    // asFunction returns undefined for objects, so metricsEmitter is undefined here
+    expect(result.metricsEmitter).toBeUndefined();
+  });
+
+  it("resolves metricsEmitter when passed as a function", () => {
+    const emitterFn = () => ({
+      gauge: () => {},
+      counter: () => {},
+      histogram: () => {},
+    });
+    const result = resolveConfig({
+      ...minValid,
+      metricsEmitter: emitterFn,
+    });
+    // asFunction returns the function, so the truthy branch is taken
+    expect(result.metricsEmitter).toBe(emitterFn);
+  });
+
+  it("resolves v0.5.0 config defaults", () => {
+    const result = resolveConfig(minValid);
+    expect(result.aggressiveCacheInvalidation).toBe(true);
+    expect(result.modelCostEstimator).toBeUndefined();
+    expect(result.metricsEmitter).toBeUndefined();
+    expect(result.otlpMetricsEndpoint).toBeUndefined();
+    expect(result.otlpMetricsHeaders).toBeUndefined();
+  });
+
+  it("resolves aggressiveCacheInvalidation false when explicitly set", () => {
+    const result = resolveConfig({
+      ...minValid,
+      aggressiveCacheInvalidation: false,
+    });
+    expect(result.aggressiveCacheInvalidation).toBe(false);
+  });
+
+  it("resolves otlpMetricsEndpoint and headers", () => {
+    const result = resolveConfig({
+      ...minValid,
+      otlpMetricsEndpoint: "http://localhost:4318/v1/metrics",
+      otlpMetricsHeaders: { "X-Api-Key": "secret" },
+    });
+    expect(result.otlpMetricsEndpoint).toBe("http://localhost:4318/v1/metrics");
+    expect(result.otlpMetricsHeaders).toEqual({ "X-Api-Key": "secret" });
+  });
 });

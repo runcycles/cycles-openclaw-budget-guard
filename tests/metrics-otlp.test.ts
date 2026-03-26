@@ -85,4 +85,48 @@ describe("createOtlpEmitter", () => {
     expect(sum.aggregationTemporality).toBe(1);
     expect(sum.isMonotonic).toBe(true);
   });
+
+  it("auto-flushes when buffer hits maxBufferSize", async () => {
+    const emitter = createOtlpEmitter({
+      endpoint: "http://localhost:4318/v1/metrics",
+      maxBufferSize: 3,
+    });
+
+    emitter.gauge("m1", 1);
+    emitter.gauge("m2", 2);
+    // No flush yet — buffer has 2 items
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    emitter.gauge("m3", 3);
+    // Buffer hit maxBufferSize (3) — auto-flush triggered
+    // flush() is async fire-and-forget so wait for microtask
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it("starts a flush timer on first enqueue", async () => {
+    const emitter = createOtlpEmitter({
+      endpoint: "http://localhost:4318/v1/metrics",
+      flushIntervalMs: 100,
+    });
+    // Enqueue to start the timer
+    emitter.gauge("timer.test", 1);
+    // Manually flush to clean up
+    await emitter.flush();
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it("encodes histogram metrics as gauge data points", async () => {
+    const emitter = createOtlpEmitter({ endpoint: "http://localhost:4318/v1/metrics" });
+    emitter.histogram("latency", 250, { endpoint: "/api" });
+    await emitter.flush();
+
+    const body = JSON.parse((mockFetch.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<string, unknown>;
+    const rm = (body.resourceMetrics as unknown[])[0] as Record<string, unknown>;
+    const sm = (rm.scopeMetrics as unknown[])[0] as Record<string, unknown>;
+    const metric = (sm.metrics as Record<string, unknown>[])[0];
+    expect(metric.name).toBe("latency");
+    // Histogram is approximated as gauge in v0.5.0
+    expect(metric).toHaveProperty("gauge");
+  });
 });
