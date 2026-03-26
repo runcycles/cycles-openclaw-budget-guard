@@ -33,7 +33,7 @@ The plugin uses the [`runcycles`](https://github.com/runcycles/cycles-client-typ
 - **OpenClaw** >= 0.1.0 with plugin support
 - **Node.js** >= 20.0.0
 - A running **Cycles server** with:
-  - A base URL (e.g. `https://cycles.example.com`)
+  - A base URL (e.g. `http://localhost:7878`)
   - An API key
   - A tenant configured with a budget scope
 
@@ -73,7 +73,7 @@ Add the following to your OpenClaw config file (typically `openclaw.json` or `op
     "entries": {
       "cycles-openclaw-budget-guard": {
         "config": {
-          "cyclesBaseUrl": "https://cycles.example.com",
+          "cyclesBaseUrl": "http://localhost:7878",
           "cyclesApiKey": "cyc_your_api_key_here",
           "tenant": "my-org"
         }
@@ -90,7 +90,7 @@ That's it — the plugin uses sensible defaults for everything else. The agent w
 ### 4. (Optional) Use environment variables for secrets
 
 ```bash
-export CYCLES_BASE_URL="https://cycles.example.com"
+export CYCLES_BASE_URL="http://localhost:7878"
 export CYCLES_API_KEY="cyc_your_api_key_here"
 ```
 
@@ -127,7 +127,7 @@ To test without a live Cycles server:
       "cycles-openclaw-budget-guard": {
         "config": {
           "enabled": true,
-          "cyclesBaseUrl": "https://cycles.example.com",
+          "cyclesBaseUrl": "http://localhost:7878",
           "cyclesApiKey": "cyc_your_api_key_here",
           "tenant": "my-org",
           "budgetId": "my-app",
