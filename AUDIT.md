@@ -12,7 +12,7 @@
 | Category | Pass | Issues |
 |----------|------|--------|
 | OpenClaw Plugin Contract | 4/4 | 0 |
-| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 47/47 | 0 |
+| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 50/50 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
 | Hook Return Types | 5/5 | 0 |
@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 48 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
+**Overall: Plugin is contract-conformant and production-ready.** All 50 config properties (45 JSON-serializable + 5 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
 
 ---
 
@@ -58,10 +58,10 @@
 
 | Metric | v0.4.0 | v0.5.0 |
 |---|---|---|
-| Test count | 217 | 248 |
-| Statement coverage | 100% | 98.52% |
-| Branch coverage | 99% | 96.92% |
-| Line coverage | 100% | 98.94% |
+| Test count | 217 | 252 |
+| Statement coverage | 100% | 98.68% |
+| Branch coverage | 99% | 97.13% |
+| Line coverage | 100% | 99.12% |
 
 ---
 

@@ -614,6 +614,43 @@ describe("commitUsage", () => {
     ).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();
   });
+
+  it("includes StandardMetrics in commit body when provided", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-metrics", 500_000, "USD_MICROCENTS", logger, {
+      model_version: "gpt-4o",
+      tokens_input: 1200,
+      tokens_output: 800,
+      latency_ms: 2500,
+    });
+    expect(mockCommitReservation).toHaveBeenCalledWith("res-metrics", {
+      idempotency_key: "test-uuid-1234",
+      actual: { unit: "USD_MICROCENTS", amount: 500_000 },
+      metrics: {
+        model_version: "gpt-4o",
+        tokens_input: 1200,
+        tokens_output: 800,
+        latency_ms: 2500,
+      },
+    });
+  });
+
+  it("omits metrics from commit body when not provided", async () => {
+    mockCommitReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { status: "committed" },
+    });
+
+    const client = createCyclesClient(makeConfig());
+    await commitUsage(client, "res-no-metrics", 500_000, "USD_MICROCENTS", logger);
+    const callBody = mockCommitReservation.mock.calls[0][1] as Record<string, unknown>;
+    expect(callBody).not.toHaveProperty("metrics");
+  });
 });
 
 describe("releaseReservation", () => {

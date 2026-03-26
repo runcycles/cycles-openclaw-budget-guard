@@ -405,6 +405,21 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|------|---------|-------------|
 | `parentBudgetId` | string | — | Parent budget ID — when set, pool balance is included in hints |
 
+### Model Cost Reconciliation (v0.5.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `modelCostEstimator` | function | — | Callback `(ctx: { model, estimatedCost, turnIndex }) => number | undefined` to reconcile model cost at commit time |
+
+### Observability (v0.5.0)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metricsEmitter` | object | — | Object with `gauge`/`counter`/`histogram` methods for observability pipeline integration |
+| `aggressiveCacheInvalidation` | boolean | `true` | Proactively refetch budget snapshot after every commit/release for fresher data |
+| `otlpMetricsEndpoint` | string | — | OTLP HTTP endpoint for auto metrics export (e.g. `http://localhost:4318/v1/metrics`) |
+| `otlpMetricsHeaders` | object | — | Custom HTTP headers for OTLP requests |
+
 ## How It Works
 
 ### Budget Levels
@@ -417,7 +432,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 
 ### Hook: `before_model_resolve`
 
-Fetches budget state, reserves budget for the model call, and commits immediately (since there's no `after_model_resolve` hook). When budget is low:
+Fetches budget state and reserves budget for the model call. The reservation is held open and committed later (in `before_prompt_build` or at `agent_end`), allowing the optional `modelCostEstimator` callback to reconcile estimated vs actual costs. When budget is low:
 - Applies model fallbacks (including chained fallbacks like `opus → [sonnet, haiku]`)
 - Enforces `limit_remaining_calls` if configured
 - Attaches budget status metadata to `ctx.metadata["cycles-budget-guard-status"]`
@@ -426,7 +441,7 @@ When budget is exhausted and `failClosed=true`, throws `BudgetExhaustedError`.
 
 ### Hook: `before_prompt_build`
 
-When `injectPromptBudgetHint` is enabled, injects a system context hint with:
+Commits any pending model reservation from the previous turn (with `modelCostEstimator` reconciliation if configured). When `injectPromptBudgetHint` is enabled, injects a system context hint with:
 - Current remaining balance and percentage
 - Budget level warnings
 - Forecast projections (estimated remaining tool/model calls based on average costs)
@@ -567,7 +582,7 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 
 | Limitation | Impact | Workaround |
 |---|---|---|
-| **Model cost is estimated, not actual.** OpenClaw has no `after_model_resolve` hook, so model costs are committed at the estimated amount. Actual token usage may differ. | Cost tracking for models is approximate. The plugin will never *overspend* — it may *under-track* slightly. | Buffer `modelBaseCosts` estimates 10–20% higher than expected. Use `costEstimator` for tools where accurate cost matters. |
+| **Model cost is estimated by default.** OpenClaw has no `after_model_resolve` hook, so model costs are based on `modelBaseCosts` estimates. v0.5.0 adds a `modelCostEstimator` callback for reconciliation. | Cost tracking for models is approximate unless you provide a `modelCostEstimator`. The plugin will never *overspend* — it may *under-track* slightly. | Use `modelCostEstimator` to reconcile costs from a proxy/gateway. Or buffer `modelBaseCosts` estimates 10–20% higher than expected. |
 | **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
 | **No heartbeat for long-running tools.** Reservations expire after `reservationTtlMs` (default 60s). If a tool takes longer, the reservation is released while the tool is still running. | Cost is not tracked for tools that exceed their TTL. | Set per-tool TTL via `toolReservationTtls` for slow tools (e.g., `"code_execution": 300000`). |
 | **No retry on Cycles server rate limits.** If the Cycles server returns HTTP 429, the plugin treats it as a reservation failure (fail-open or synthetic DENY). | At high concurrency (100+ agents), rate limits could cause spurious denials. | Provision the Cycles server for expected load. |

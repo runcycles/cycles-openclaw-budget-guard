@@ -2042,6 +2042,44 @@ describe("v0.5.0 — MetricsEmitter", () => {
     // Should not throw even though gauge throws
     await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).resolves.not.toThrow();
   });
+
+  it("emits budget reserved and spent gauges on snapshot fetch", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ remaining: 50_000_000, reserved: 5_000_000, spent: 10_000_000, level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.reserved",
+      5_000_000,
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+    expect(emitter.gauge).toHaveBeenCalledWith(
+      "cycles.budget.spent",
+      10_000_000,
+      expect.objectContaining({ tenant: "test-tenant" }),
+    );
+  });
+
+  it("emits reservation denied counter when tool reservation is denied", async () => {
+    const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(false);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "budget_exhausted" });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    expect(emitter.counter).toHaveBeenCalledWith(
+      "cycles.reservation.denied",
+      1,
+      expect.objectContaining({ kind: "tool", name: "web_search", reason: "budget_exhausted" }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
