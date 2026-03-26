@@ -22,5 +22,18 @@
       "mcp__github__push_files",
       "mcp__github__delete_file"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/session-start-global-deny.sh"
+          }
+        ]
+      }
+    ]
   }
 }
