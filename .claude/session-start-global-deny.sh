@@ -65,7 +65,7 @@ PROXY_BASE=""
 for dir in /home/user/*/; do
   if [ -d "$dir/.git" ]; then
     url=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
-    if echo "$url" | grep -q '127.0.0.1.*local_proxy'; then
+    if echo "$url" | grep -q 'local_proxy.*127.0.0.1'; then
       # Extract base URL: http://local_proxy@127.0.0.1:PORT/git
       PROXY_BASE=$(echo "$url" | sed 's|\(http://local_proxy@127\.0\.0\.1:[0-9]*/git\)/.*|\1|')
       break
