@@ -379,7 +379,7 @@ function startHeartbeat(toolCallId: string, reservationId: string): void {
         extend_by_ms: config.heartbeatIntervalMs,
       };
       // Use client.extendReservation if available, otherwise skip
-      if ("extendReservation" in client && typeof (client as Record<string, unknown>).extendReservation === "function") {
+      if ("extendReservation" in client && typeof (client as unknown as Record<string, unknown>).extendReservation === "function") {
         await (client as unknown as { extendReservation(id: string, body: Record<string, unknown>): Promise<unknown> })
           .extendReservation(reservationId, body);
         logger.debug(`Heartbeat: extended reservation ${reservationId} for tool callId=${toolCallId}`);
