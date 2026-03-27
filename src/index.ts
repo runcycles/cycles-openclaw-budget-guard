@@ -115,6 +115,21 @@ export default function (api: OpenClawPluginApi): void {
     );
   }
 
+  // Auto-detect model name from OpenClaw system config if not set explicitly
+  if (!config.defaultModelName) {
+    const sysConfig = api.config as Record<string, unknown>;
+    const detected = asString(sysConfig.model)
+      ?? asString((sysConfig.agent as Record<string, unknown>)?.model)
+      ?? asString(sysConfig.defaultModel)
+      ?? asString(sysConfig.model_name);
+    if (detected) {
+      config.defaultModelName = detected;
+      api.logger.info(`[openclaw-budget-guard] Auto-detected model from system config: ${detected}`);
+    } else {
+      api.logger.debug(`[openclaw-budget-guard] Could not auto-detect model name from system config (keys: ${Object.keys(sysConfig).join(", ")}). Set defaultModelName in plugin config for model budget tracking.`);
+    }
+  }
+
   // v0.5.0: Auto-create OTLP metrics emitter if endpoint is configured and no custom emitter provided
   if (config.otlpMetricsEndpoint && !config.metricsEmitter) {
     config.metricsEmitter = createOtlpEmitter({
@@ -152,4 +167,8 @@ export default function (api: OpenClawPluginApi): void {
     name: "openclaw-budget-guard:agent_end",
     priority: 100,
   });
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
 }
