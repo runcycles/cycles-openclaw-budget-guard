@@ -115,18 +115,39 @@ export default function (api: OpenClawPluginApi): void {
     );
   }
 
-  // Auto-detect model name from OpenClaw system config if not set explicitly
+  // Auto-detect model name from all available config surfaces if not set explicitly.
+  // OpenClaw doesn't pass the model name in hook events, so we check everywhere we can.
   if (!config.defaultModelName) {
     const sysConfig = api.config as Record<string, unknown>;
-    const detected = asString(sysConfig.model)
-      ?? asString((sysConfig.agent as Record<string, unknown>)?.model)
+    const pluginCfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
+
+    // Check system config (api.config) — the full OpenClaw config snapshot
+    const fromSys = asString(sysConfig.model)
       ?? asString(sysConfig.defaultModel)
-      ?? asString(sysConfig.model_name);
+      ?? asString(sysConfig.model_name)
+      ?? asString(sysConfig.modelName)
+      ?? asString((sysConfig.agent as Record<string, unknown>)?.model)
+      ?? asString((sysConfig.gateway as Record<string, unknown>)?.model)
+      ?? asString((sysConfig.llm as Record<string, unknown>)?.model)
+      ?? asString((sysConfig.provider as Record<string, unknown>)?.model);
+
+    // Check plugin config (api.pluginConfig) — might have model in a non-standard field
+    const fromPlugin = asString(pluginCfg.model)
+      ?? asString(pluginCfg.modelName)
+      ?? asString(pluginCfg.defaultModel);
+
+    const detected = fromSys ?? fromPlugin;
+
     if (detected) {
       config.defaultModelName = detected;
-      api.logger.info(`[openclaw-budget-guard] Auto-detected model from system config: ${detected}`);
+      api.logger.info(`[openclaw-budget-guard] Auto-detected model: ${detected}`);
     } else {
-      api.logger.debug(`[openclaw-budget-guard] Could not auto-detect model name from system config (keys: ${Object.keys(sysConfig).join(", ")}). Set defaultModelName in plugin config for model budget tracking.`);
+      api.logger.info(
+        `[openclaw-budget-guard] Could not auto-detect model name. ` +
+        `Set defaultModelName in plugin config (e.g. "openai/gpt-5-nano"). ` +
+        `System config keys: [${Object.keys(sysConfig).join(", ")}]. ` +
+        `Plugin config keys: [${Object.keys(pluginCfg).join(", ")}].`
+      );
     }
   }
 

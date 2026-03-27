@@ -460,17 +460,26 @@ export async function beforeModelResolve(
 
   const snapshot = await getSnapshot(ctx);
 
-  // Resolve model name from event — OpenClaw may pass it in different fields,
-  // or not at all (only 'prompt' key). Fall back to config.defaultModelName.
+  // Resolve model name — check event fields, ctx.metadata, and config fallback.
+  // OpenClaw may pass the model in different places depending on version.
   const eventRecord = event as Record<string, unknown>;
+  const ctxMeta = (ctx.metadata ?? {}) as Record<string, unknown>;
   const eventModel = event.model
     ?? eventRecord.modelId as string | undefined
     ?? eventRecord.modelName as string | undefined
     ?? eventRecord.model_id as string | undefined
     ?? eventRecord.model_name as string | undefined
+    ?? ctxMeta.model as string | undefined
+    ?? ctxMeta.modelId as string | undefined
+    ?? ctxMeta.modelName as string | undefined
     ?? config.defaultModelName;
   if (!eventModel) {
-    logger.warn(`before_model_resolve: cannot determine model name (event keys: ${Object.keys(event).join(", ")}). Set defaultModelName in plugin config to enable model budget tracking.`);
+    logger.warn(
+      `before_model_resolve: cannot determine model name. ` +
+      `Event keys: [${Object.keys(event).join(", ")}]. ` +
+      `Metadata keys: [${Object.keys(ctxMeta).join(", ")}]. ` +
+      `Set defaultModelName in plugin config to enable model budget tracking.`
+    );
     attachBudgetStatus(ctx, snapshot);
     return undefined;
   }
