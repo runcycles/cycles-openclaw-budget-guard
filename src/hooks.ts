@@ -477,28 +477,29 @@ export async function beforeModelResolve(
 
   if (snapshot.level === "low") {
     // Gap 4: Chained model fallbacks
-    const fallbacks = config.modelFallbacks[event.model];
+    const fallbacks = config.modelFallbacks[eventModel];
     if (fallbacks) {
       const candidates = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
       for (const candidate of candidates) {
         const cost = config.modelBaseCosts[candidate] ?? config.defaultModelCost;
         if (cost <= snapshot.remaining) {
           logger.info(
-            `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${candidate}`,
+            `Budget low (${snapshot.remaining} remaining) — downgrading model ${eventModel} → ${candidate}`,
           );
-          emitCounter("cycles.model.downgrade", 1, { from: event.model, to: candidate });
+          emitCounter("cycles.model.downgrade", 1, { from: eventModel, to: candidate });
           resolvedModel = candidate;
           break;
         }
       }
     } else {
-      logger.debug(`Budget low but no fallback configured for model ${event.model}`);
+      logger.debug(`Budget low but no fallback configured for model ${eventModel}`);
     }
 
     // Gap 13: Apply low-budget strategies
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       if (config.failClosed) {
-        logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+        logger.warn(`Call limit reached for model ${eventModel} — budget is low, blocking execution`);
         throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
@@ -508,13 +509,13 @@ export async function beforeModelResolve(
   if (snapshot.level === "exhausted") {
     if (config.failClosed) {
       logger.warn(
-        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
+        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${eventModel}`,
       );
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
-      `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
+      `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${eventModel}`,
     );
   }
 
@@ -577,7 +578,7 @@ export async function beforeModelResolve(
     checkExhaustionForecast(snapshot.remaining);
   }
 
-  if (resolvedModel !== event.model) {
+  if (resolvedModel !== eventModel) {
     return { modelOverride: resolvedModel };
   }
   return undefined;
@@ -630,6 +631,16 @@ export async function beforeToolCall(
   ctx: HookContext,
 ): Promise<ToolCallResult | undefined> {
   const toolName = event.toolName;
+
+  // Guard against missing event fields
+  if (!toolName) {
+    logger.warn("before_tool_call: toolName is undefined in event — blocking");
+    return { block: true, blockReason: "Missing tool name in event" };
+  }
+  if (!event.toolCallId) {
+    logger.warn(`before_tool_call: toolCallId is undefined for tool ${toolName} — blocking`);
+    return { block: true, blockReason: "Missing tool call ID in event" };
+  }
 
   // Resolve user/session from ctx if available (consistent with beforeModelResolve)
   if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;

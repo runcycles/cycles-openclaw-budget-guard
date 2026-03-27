@@ -1986,6 +1986,20 @@ describe("v0.5.0 — model reserve-then-commit", () => {
     expect(mockReserveBudget).not.toHaveBeenCalled();
   });
 
+  it("blocks when toolName is undefined", async () => {
+    setup();
+    const result = await beforeToolCall({ toolName: undefined as unknown as string, toolCallId: "tc1" }, makeHookContext());
+    expect(result).toEqual(expect.objectContaining({ block: true, blockReason: expect.stringContaining("Missing tool name") }));
+    expect(mockReserveBudget).not.toHaveBeenCalled();
+  });
+
+  it("blocks when toolCallId is undefined", async () => {
+    setup();
+    const result = await beforeToolCall({ toolName: "test", toolCallId: undefined as unknown as string }, makeHookContext());
+    expect(result).toEqual(expect.objectContaining({ block: true, blockReason: expect.stringContaining("Missing tool call ID") }));
+    expect(mockReserveBudget).not.toHaveBeenCalled();
+  });
+
   it("handles context without metadata gracefully", async () => {
     setup();
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
