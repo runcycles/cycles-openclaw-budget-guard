@@ -188,6 +188,7 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
 
   // Gap 5: Detect budget level transitions
   if (lastKnownLevel !== undefined && cachedSnapshot.level !== lastKnownLevel) {
+    logger.warn(`Budget level changed: ${lastKnownLevel} → ${cachedSnapshot.level} (remaining=${cachedSnapshot.remaining})`);
     const event = {
       previousLevel: lastKnownLevel,
       currentLevel: cachedSnapshot.level,
@@ -424,7 +425,7 @@ async function commitPendingModelReservation(): Promise<void> {
   const unit = reservation.currency ?? config.currency;
   const metrics: StandardMetrics = { model_version: modelName };
   await commitUsage(client, reservation.reservationId, actual, unit, logger, metrics);
-  logger.debug(`Committed model reservation for ${modelName}: ${actual} ${unit}`);
+  logger.info(`Model committed: ${modelName} (cost=${actual} ${unit})`);
 
   trackCost(`model:${modelName}`, actual);
   totalModelCost += actual;
@@ -555,6 +556,7 @@ export async function beforeModelResolve(
   } else {
     totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
+    logger.info(`Model reserved: ${resolvedModel} (estimate=${modelCost}, remaining=${snapshot.remaining})`);
 
     // v0.5.0: Commit any pending model reservation from previous turn first
     await commitPendingModelReservation();
@@ -689,7 +691,7 @@ export async function beforeToolCall(
   const estimate = config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
   if (!(toolName in config.toolBaseCosts) && !warnedUnconfiguredTools.has(toolName)) {
     warnedUnconfiguredTools.add(toolName);
-    logger.info(
+    logger.warn(
       `Tool "${toolName}" has no entry in toolBaseCosts — using default estimate (${DEFAULT_TOOL_COST} ${config.currency}). Add it to toolBaseCosts for accurate budgeting.`,
     );
   }
@@ -800,6 +802,7 @@ export async function beforeToolCall(
 
   totalReservationsMade++;
   emitCounter("cycles.reservation.created", 1, { kind: "tool", name: toolName });
+  logger.info(`Tool reserved: ${toolName} (estimate=${estimate}, remaining=${snapshot.remaining})`);
 
   if (result.reservationId) {
     activeReservations.set(event.toolCallId, {
@@ -873,9 +876,7 @@ export async function afterToolCall(
   // Delete from tracking AFTER commit (not before) so orphaned reservations
   // can be released at agentEnd if commit fails
   activeReservations.delete(event.toolCallId);
-  logger.debug(
-    `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
-  );
+  logger.info(`Tool committed: ${reservation.toolName} (cost=${actual} ${unit})`);
 
   // Gap 6 & 9: Track tool cost
   trackCost(`tool:${reservation.toolName}`, actual);

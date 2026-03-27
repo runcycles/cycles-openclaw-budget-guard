@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-03-27
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.2
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.3
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -37,18 +37,19 @@
 
 | Feature | Description | Location |
 |---|---|---|
-| Branded startup | `Cycles Budget Guard for OpenClaw v0.7.2` banner with URL at plugin init | `src/index.ts` |
+| Branded startup | `Cycles Budget Guard for OpenClaw` banner with URL at plugin init. Short one-liner on subsequent inits. | `src/index.ts` |
 | Consistent naming | Internal prefix renamed from `cycles-budget-guard` to `openclaw-budget-guard` across logs, metadata keys, hook names, error prefixes, OTLP service name | All source files |
 | Single-source version | Build-time constant from `package.json` via tsup `define`. Bumping requires only `package.json` + `openclaw.plugin.json`. | `tsup.config.ts`, `src/version.ts` |
 | No process.env | Removed env var fallbacks to eliminate OpenClaw installer "dangerous code patterns" warning. Users use OpenClaw env var interpolation instead. | `src/config.ts` |
 | Model name auto-detect | Checks event fields, ctx.metadata, api.config, api.pluginConfig for model name. Falls back to `defaultModelName` config. Logs available keys at info level when not found. | `src/hooks.ts`, `src/index.ts` |
 | `defaultModelName` config | Fallback model name for OpenClaw which doesn't pass model in hook events. | `src/types.ts`, `src/config.ts`, `openclaw.plugin.json` |
+| Model blocking workaround | OpenClaw's `before_model_resolve` has no `{ block: true }` support. When budget is exhausted, returns `{ modelOverride: "__cycles_budget_exhausted__" }` causing provider rejection. [Feature request filed](https://github.com/openclaw/openclaw/issues/55771). | `src/hooks.ts:beforeModelResolve` |
 
 ### Bug fixes
 
 | Fix | Description | Location |
 |---|---|---|
-| BudgetExhaustedError on healthy budget | Plugin threw "Budget exhausted" on any DENY regardless of actual budget level. Now only throws when budget is genuinely exhausted. | `src/hooks.ts:beforeModelResolve` |
+| BudgetExhaustedError on healthy budget | Plugin threw "Budget exhausted" on any DENY regardless of actual budget level. Now only blocks when budget is genuinely exhausted. | `src/hooks.ts:beforeModelResolve` |
 | Undefined model/tool names | Guard against undefined event fields with validation and fallbacks. | `src/hooks.ts` |
 | Commit-before-delete ordering | `activeReservations.delete()` moved after `commitUsage()` so failed commits are released at agentEnd. | `src/hooks.ts:afterToolCall` |
 | Release failures at debug level | Bumped to warn — operators need to see budget leak warnings. | `src/cycles.ts:releaseReservation` |
@@ -65,13 +66,13 @@
 
 - README rewritten: softened claims, surfaced fail-open behavior, added cost model explainer, production checklist, use-case guide
 - Content moved to `ARCHITECTURE.md`: project structure, architecture diagram, CI/publishing
-- Known Limitations cleaned: removed struck-through items, added heartbeat caveat
+- Known Limitations cleaned: removed struck-through items, added heartbeat caveat, model blocking workaround, model name limitation
 
 ### Test coverage
 
-| Metric | v0.6.0 | v0.7.2 |
+| Metric | v0.6.0 | v0.7.3 |
 |---|---|---|
-| Test count | 289 | 299 |
+| Test count | 289 | 300 |
 | Test files | 9 | 10 |
 | Statement coverage | 99.45% | 99.47% |
 | Branch coverage | 97.95% | 97.74% |

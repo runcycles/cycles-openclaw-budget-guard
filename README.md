@@ -573,7 +573,7 @@ Fetches budget state and reserves budget for the model call. The reservation is 
 - Enforces `limit_remaining_calls` if configured
 - Attaches budget status metadata to `ctx.metadata["openclaw-budget-guard-status"]`
 
-When budget is exhausted and `failClosed=true`, throws `BudgetExhaustedError`.
+When budget is exhausted and `failClosed=true`, the plugin blocks the model call by overriding the model name to `__cycles_budget_exhausted__`, which causes the LLM provider to reject the request. The user sees "Unknown model: openai/cycles_budget_exhausted" — this is intentional. OpenClaw's `before_model_resolve` hook does not support `{ block: true }` like `before_tool_call` does ([feature request](https://github.com/openclaw/openclaw/issues/55771)), so this workaround is the only way to prevent model execution when budget runs out.
 
 ### Hook: `before_prompt_build`
 
@@ -699,6 +699,23 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - Verify the plugin is enabled: `openclaw plugins list`
 - Check that `openclaw.plugin.json` is included in the installed package
 
+**"Unknown model: openai/\_\_cycles\_budget\_exhausted\_\_" or "Budget exhausted"**
+
+Your budget has run out. To resume:
+
+1. **Fund the budget** via the Cycles Admin API:
+   ```bash
+   curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org&unit=USD_MICROCENTS" \
+     -H "X-Cycles-API-Key: your-admin-key" \
+     -H "Content-Type: application/json" \
+     -d '{"operation": "CREDIT", "amount": 50000000, "idempotency_key": "topup-001"}'
+   ```
+   This adds 50,000,000 units ($0.50) to the budget. Adjust the `scope` to match your `tenant` (and `budgetId` if set).
+
+2. **Start a new agent session** — the plugin fetches fresh budget state at the start of each session.
+
+For details on budget management, see [Budget Allocation and Management](https://runcycles.io/how-to/budget-allocation-and-management-in-cycles).
+
 **"cyclesBaseUrl is required" error**
 - Set `cyclesBaseUrl` in your plugin config (use `"${CYCLES_BASE_URL}"` for env var interpolation)
 
@@ -737,6 +754,8 @@ Before deploying to production:
 | **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
 | **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
 | **Heartbeat requires client support.** Reservation auto-extension (`heartbeatIntervalMs`) calls `client.extendReservation()`. If the Cycles client does not implement this method, heartbeats are silently skipped. | Long-running tools may still lose cost tracking if the client lacks `extendReservation`. | Use per-tool TTL overrides via `toolReservationTtls` as fallback. |
+| **Model blocking uses a provider-error workaround.** OpenClaw's `before_model_resolve` hook does not support `{ block: true }` ([feature request](https://github.com/openclaw/openclaw/issues/55771)). When budget is exhausted, the plugin overrides the model to `__cycles_budget_exhausted__`, causing the provider to reject the call. The user sees "Unknown model" instead of a clean budget error. | Model calls are effectively blocked, but the error message is a provider error rather than a budget message. Tool blocking via `before_tool_call` works cleanly with `{ block: true }`. | Pending OpenClaw adding `block` support to `before_model_resolve`. |
+| **OpenClaw does not pass model name in hook events.** The `before_model_resolve` event only contains `{ prompt }` — no model name ([feature request](https://github.com/openclaw/openclaw/issues/55771)). The plugin auto-detects the model from system config or falls back to `defaultModelName`. | Model-specific cost tracking requires `defaultModelName` to be set in plugin config. | Set `defaultModelName` to your agent's model (e.g. `"openai/gpt-5-nano"`). |
 
 For project structure, architecture diagrams, and development workflow, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 ## Documentation

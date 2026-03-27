@@ -1025,14 +1025,15 @@ describe("unconfigured tool cost warning", () => {
     vi.clearAllMocks();
   });
 
-  it("logs info on first use of tool not in toolBaseCosts", async () => {
+  it("warns on first use of tool not in toolBaseCosts", async () => {
     const { logger } = setup({ toolBaseCosts: {} });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
     mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
     mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
 
     await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c1" }, makeHookContext());
-    expect(logger.info).toHaveBeenCalledWith(
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Tool "unknown_tool" has no entry in toolBaseCosts'),
     );
   });
@@ -1041,14 +1042,15 @@ describe("unconfigured tool cost warning", () => {
     const { logger } = setup({ toolBaseCosts: {} });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot());
     mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
     mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
 
     await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c1" }, makeHookContext());
     await beforeToolCall({ toolName: "unknown_tool", toolCallId: "c2" }, makeHookContext());
 
-    const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => (c[0] as string).includes("unknown_tool"));
-    expect(infoCalls).toHaveLength(1);
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => (c[0] as string).includes("has no entry in toolBaseCosts"));
+    expect(warnCalls).toHaveLength(1);
   });
 
   it("does not warn for tools in toolBaseCosts", async () => {
