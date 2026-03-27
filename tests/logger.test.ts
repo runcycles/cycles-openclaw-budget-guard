@@ -71,11 +71,11 @@ describe("createLogger", () => {
     expect(errorSpy).toHaveBeenCalledOnce();
   });
 
-  it("prefixes all messages with [cycles-budget-guard]", () => {
+  it("prefixes all messages with [openclaw-budget-guard]", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const logger = createLogger("info");
     logger.info("test message");
-    expect(infoSpy).toHaveBeenCalledWith("[cycles-budget-guard]", "test message");
+    expect(infoSpy).toHaveBeenCalledWith("[openclaw-budget-guard]", "test message");
   });
 
   it("passes extra args through", () => {
@@ -83,7 +83,7 @@ describe("createLogger", () => {
     const logger = createLogger("info");
     logger.info("msg", { foo: 1 }, "extra");
     expect(infoSpy).toHaveBeenCalledWith(
-      "[cycles-budget-guard]",
+      "[openclaw-budget-guard]",
       "msg",
       { foo: 1 },
       "extra",

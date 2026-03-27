@@ -21,7 +21,7 @@ cycles-openclaw-budget-guard/
 │   ├── index.ts                 # Plugin entrypoint — exports types and default function
 │   ├── types.ts                 # Config, event, snapshot, and error type definitions
 │   ├── config.ts                # Config validation with defaults and env-var fallbacks
-│   ├── logger.ts                # Leveled logger with [cycles-budget-guard] prefix
+│   ├── logger.ts                # Leveled logger with [openclaw-budget-guard] prefix
 │   ├── cycles.ts                # Wrappers around runcycles CyclesClient
 │   ├── budget.ts                # Budget classification, hint formatting, tool permissions
 │   ├── hooks.ts                 # All 5 hook implementations with reservation tracking

@@ -115,12 +115,12 @@ function toOtlpPayload(batch: DataPoint[]): Record<string, unknown> {
       {
         resource: {
           attributes: [
-            { key: "service.name", value: { stringValue: "cycles-budget-guard" } },
+            { key: "service.name", value: { stringValue: "openclaw-budget-guard" } },
           ],
         },
         scopeMetrics: [
           {
-            scope: { name: "cycles-budget-guard", version: PLUGIN_VERSION },
+            scope: { name: "openclaw-budget-guard", version: PLUGIN_VERSION },
             metrics,
           },
         ],

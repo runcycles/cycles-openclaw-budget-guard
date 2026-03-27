@@ -11,16 +11,16 @@ export function resolveConfig(
 
   if (!cyclesBaseUrl) {
     throw new Error(
-      "[cycles-budget-guard] cyclesBaseUrl is required in plugin config",
+      "[openclaw-budget-guard] cyclesBaseUrl is required in plugin config",
     );
   }
   if (!cyclesApiKey) {
     throw new Error(
-      "[cycles-budget-guard] cyclesApiKey is required in plugin config",
+      "[openclaw-budget-guard] cyclesApiKey is required in plugin config",
     );
   }
   if (!tenant) {
-    throw new Error("[cycles-budget-guard] tenant is required in config");
+    throw new Error("[openclaw-budget-guard] tenant is required in config");
   }
 
   const lowBudgetThreshold = asNumber(raw.lowBudgetThreshold) ?? 10_000_000;
@@ -28,26 +28,26 @@ export function resolveConfig(
 
   if (lowBudgetThreshold < 0) {
     throw new Error(
-      `[cycles-budget-guard] lowBudgetThreshold (${lowBudgetThreshold}) must be non-negative`,
+      `[openclaw-budget-guard] lowBudgetThreshold (${lowBudgetThreshold}) must be non-negative`,
     );
   }
 
   if (exhaustedThreshold < 0) {
     throw new Error(
-      `[cycles-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be non-negative`,
+      `[openclaw-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be non-negative`,
     );
   }
 
   if (exhaustedThreshold >= lowBudgetThreshold) {
     throw new Error(
-      `[cycles-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be less than lowBudgetThreshold (${lowBudgetThreshold})`,
+      `[openclaw-budget-guard] exhaustedThreshold (${exhaustedThreshold}) must be less than lowBudgetThreshold (${lowBudgetThreshold})`,
     );
   }
 
   const maxRemainingCallsWhenLow = asNumber(raw.maxRemainingCallsWhenLow) ?? 10;
   if (maxRemainingCallsWhenLow < 1) {
     throw new Error(
-      `[cycles-budget-guard] maxRemainingCallsWhenLow (${maxRemainingCallsWhenLow}) must be at least 1`,
+      `[openclaw-budget-guard] maxRemainingCallsWhenLow (${maxRemainingCallsWhenLow}) must be at least 1`,
     );
   }
 
@@ -55,7 +55,7 @@ export function resolveConfig(
   const overagePolicy = asString(raw.overagePolicy) ?? "ALLOW_IF_AVAILABLE";
   if (!VALID_OVERAGE_POLICIES.includes(overagePolicy)) {
     throw new Error(
-      `[cycles-budget-guard] overagePolicy "${overagePolicy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
+      `[openclaw-budget-guard] overagePolicy "${overagePolicy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
     );
   }
 
@@ -65,7 +65,7 @@ export function resolveConfig(
     for (const [tool, policy] of Object.entries(toolOveragePolicies)) {
       if (!VALID_OVERAGE_POLICIES.includes(policy)) {
         throw new Error(
-          `[cycles-budget-guard] toolOveragePolicies["${tool}"] = "${policy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
+          `[openclaw-budget-guard] toolOveragePolicies["${tool}"] = "${policy}" is invalid (must be one of: ${VALID_OVERAGE_POLICIES.join(", ")})`,
         );
       }
     }
@@ -77,7 +77,7 @@ export function resolveConfig(
     for (const [tool, limit] of Object.entries(toolCallLimits)) {
       if (limit < 1) {
         throw new Error(
-          `[cycles-budget-guard] toolCallLimits["${tool}"] = ${limit} must be at least 1`,
+          `[openclaw-budget-guard] toolCallLimits["${tool}"] = ${limit} must be at least 1`,
         );
       }
     }

@@ -421,7 +421,7 @@ describe("beforeModelResolve", () => {
     const ctx = makeHookContext();
     await beforeModelResolve({ model: "gpt-4o" }, ctx);
 
-    expect(ctx.metadata!["cycles-budget-guard-status"]).toEqual({
+    expect(ctx.metadata!["openclaw-budget-guard-status"]).toEqual({
       level: "healthy",
       remaining: 50_000_000,
       allocated: 100_000_000,
@@ -438,7 +438,7 @@ describe("beforeModelResolve", () => {
     const ctx = makeHookContext();
     await beforeModelResolve({ model: "gpt-4o" }, ctx);
 
-    const status = ctx.metadata!["cycles-budget-guard-status"] as Record<string, unknown>;
+    const status = ctx.metadata!["openclaw-budget-guard-status"] as Record<string, unknown>;
     expect(status.percentRemaining).toBeUndefined();
   });
 
@@ -1075,7 +1075,7 @@ describe("session summary includes toolCallCounts", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata?.["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata?.["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary).toBeDefined();
     expect(summary.toolCallCounts).toEqual({ web_search: 2, code_exec: 1 });
   });
@@ -1373,7 +1373,7 @@ describe("agentEnd", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.remaining).toBe(42);
     expect(summary.spent).toBe(10);
     expect(summary.level).toBe("healthy");
@@ -1388,7 +1388,7 @@ describe("agentEnd", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary).toHaveProperty("avgToolCost");
     expect(summary).toHaveProperty("avgModelCost");
   });
@@ -1419,7 +1419,7 @@ describe("agentEnd", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.avgToolCost).toBeGreaterThan(0);
     expect(summary.avgModelCost).toBeGreaterThan(0);
     expect(summary.estimatedRemainingToolCalls).toBeDefined();
@@ -1434,7 +1434,7 @@ describe("agentEnd", () => {
     // agentEnd with no prior tool or model calls
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.avgToolCost).toBe(0);
     expect(summary.avgModelCost).toBe(0);
     expect(summary.estimatedRemainingToolCalls).toBeUndefined();
@@ -1496,7 +1496,7 @@ describe("agentEnd", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.totalReservationsMade).toBe(2);
   });
 });
@@ -2209,7 +2209,7 @@ describe("v0.5.0 — cost breakdown accumulates for repeated tools", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     const breakdown = summary.costBreakdown as Record<string, { count: number; totalCost: number }>;
     expect(breakdown["tool:web_search"]).toBeDefined();
     expect(breakdown["tool:web_search"].count).toBe(2);
@@ -2307,7 +2307,7 @@ describe("v0.6.0 — unconfigured tool report", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     const unconfigured = summary.unconfiguredTools as Array<{ name: string; callCount: number; estimatedTotalCost: number }>;
     expect(unconfigured).toBeDefined();
     expect(unconfigured).toHaveLength(1);
@@ -2329,7 +2329,7 @@ describe("v0.6.0 — unconfigured tool report", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.unconfiguredTools).toBeUndefined();
   });
 });
@@ -2358,7 +2358,7 @@ describe("v0.6.0 — session event log", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     const log = summary.eventLog as Array<Record<string, unknown>>;
     expect(log).toBeDefined();
     expect(log.length).toBeGreaterThanOrEqual(3); // model reserve, tool reserve, tool commit
@@ -2379,7 +2379,7 @@ describe("v0.6.0 — session event log", () => {
     const ctx = makeHookContext();
     await agentEnd({}, ctx);
 
-    const summary = ctx.metadata!["cycles-budget-guard"] as Record<string, unknown>;
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
     expect(summary.eventLog).toBeUndefined();
   });
 });
