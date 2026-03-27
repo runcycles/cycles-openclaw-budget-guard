@@ -36,6 +36,7 @@ export function makeConfig(
     // Gap 1
     modelBaseCosts: {},
     defaultModelCost: 500_000,
+    defaultModelName: undefined,
     // Gap 2
     costEstimator: undefined,
     // Gap 3

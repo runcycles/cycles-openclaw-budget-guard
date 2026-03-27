@@ -106,6 +106,7 @@ export function resolveConfig(
     // Gap 1: LLM call reservations
     modelBaseCosts: asNumberRecord(raw.modelBaseCosts) ?? {},
     defaultModelCost: asNumber(raw.defaultModelCost) ?? 500_000,
+    defaultModelName: asString(raw.defaultModelName),
 
     // Gap 2: Actual cost tracking
     costEstimator: asFunction(raw.costEstimator) as BudgetGuardConfig["costEstimator"],

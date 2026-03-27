@@ -102,6 +102,10 @@
         "default": 500000,
         "description": "Fallback cost per model completion when model is not in modelBaseCosts."
       },
+      "defaultModelName": {
+        "type": "string",
+        "description": "Model name to use for budget reservations when OpenClaw does not pass the model name in the hook event. Set this to your agent's model (e.g. 'openai/gpt-5-nano')."
+      },
       "userId": {
         "type": "string",
         "description": "Optional user identifier for per-user budget scoping."
