@@ -98,19 +98,22 @@ describe("DryRunClient", () => {
     expect(bal2.body.balances[0].reserved.amount).toBe(0);
   });
 
-  it("commit with unknown reservationId treats reserved as 0", async () => {
+  it("commit with unknown reservationId returns 409", async () => {
     const client = new DryRunClient(10_000_000);
-    await client.commitReservation("unknown-id", { actual: { amount: 1_000 } });
+    const result = await client.commitReservation("unknown-id", { actual: { amount: 1_000 } });
+    expect(result.isSuccess).toBe(false);
+    expect(result.status).toBe(409);
 
     const bal = await client.getBalances({ tenant: "t" });
-    // remaining adjusts by diff: 0 (reserved) - 1000 (actual) = -1000 refund
-    expect(bal.body.balances[0].remaining.amount).toBe(10_000_000 - 1_000);
-    expect(bal.body.balances[0].spent.amount).toBe(1_000);
+    expect(bal.body.balances[0].remaining.amount).toBe(10_000_000);
+    expect(bal.body.balances[0].spent.amount).toBe(0);
   });
 
-  it("release with unknown reservationId is a no-op", async () => {
+  it("release with unknown reservationId returns 409", async () => {
     const client = new DryRunClient(10_000_000);
-    await client.releaseReservation("unknown-id");
+    const result = await client.releaseReservation("unknown-id");
+    expect(result.isSuccess).toBe(false);
+    expect(result.status).toBe(409);
 
     const bal = await client.getBalances({ tenant: "t" });
     expect(bal.body.balances[0].remaining.amount).toBe(10_000_000);

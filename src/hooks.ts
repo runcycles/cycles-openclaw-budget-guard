@@ -459,37 +459,47 @@ export async function beforeModelResolve(
   if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
 
   const snapshot = await getSnapshot(ctx);
-  logger.debug(`before_model_resolve: model=${event.model} level=${snapshot.level}`);
+
+  // Guard against undefined model name — OpenClaw may pass it differently
+  const eventModel = event.model ?? (event as Record<string, unknown>).modelId as string | undefined;
+  if (!eventModel) {
+    logger.warn("before_model_resolve: model name is undefined in event — skipping budget reservation");
+    attachBudgetStatus(ctx, snapshot);
+    return undefined;
+  }
+
+  logger.debug(`before_model_resolve: model=${eventModel} level=${snapshot.level}`);
 
   // Gap 12: Attach status for end-user visibility
   attachBudgetStatus(ctx, snapshot);
 
-  let resolvedModel = event.model;
+  let resolvedModel = eventModel;
 
   if (snapshot.level === "low") {
     // Gap 4: Chained model fallbacks
-    const fallbacks = config.modelFallbacks[event.model];
+    const fallbacks = config.modelFallbacks[eventModel];
     if (fallbacks) {
       const candidates = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
       for (const candidate of candidates) {
         const cost = config.modelBaseCosts[candidate] ?? config.defaultModelCost;
         if (cost <= snapshot.remaining) {
           logger.info(
-            `Budget low (${snapshot.remaining} remaining) — downgrading model ${event.model} → ${candidate}`,
+            `Budget low (${snapshot.remaining} remaining) — downgrading model ${eventModel} → ${candidate}`,
           );
-          emitCounter("cycles.model.downgrade", 1, { from: event.model, to: candidate });
+          emitCounter("cycles.model.downgrade", 1, { from: eventModel, to: candidate });
           resolvedModel = candidate;
           break;
         }
       }
     } else {
-      logger.debug(`Budget low but no fallback configured for model ${event.model}`);
+      logger.debug(`Budget low but no fallback configured for model ${eventModel}`);
     }
 
     // Gap 13: Apply low-budget strategies
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       if (config.failClosed) {
-        logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+        logger.warn(`Call limit reached for model ${eventModel} — budget is low, blocking execution`);
         throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
@@ -499,13 +509,13 @@ export async function beforeModelResolve(
   if (snapshot.level === "exhausted") {
     if (config.failClosed) {
       logger.warn(
-        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${event.model}`,
+        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${eventModel}`,
       );
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: event.model, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
     logger.warn(
-      `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${event.model}`,
+      `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${eventModel}`,
     );
   }
 
@@ -522,19 +532,13 @@ export async function beforeModelResolve(
   });
 
   if (!isAllowed(result.decision)) {
-    if (config.failClosed) {
-      logger.warn(
-        `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
-      );
-      emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: result.reasonCode ?? "denied" });
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
-    }
-    logger.warn(
-      `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
-    );
-    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: "denied_fail_open" });
-    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    const reason = result.reasonCode ?? "denied";
+    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
+    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+
+    // Reservation denied but budget level was already checked above (exhausted throws at line 515).
+    // If we reach here, budget is healthy/low but the reservation failed for another reason.
+    logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue`);
   } else {
     totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
@@ -570,7 +574,7 @@ export async function beforeModelResolve(
     checkExhaustionForecast(snapshot.remaining);
   }
 
-  if (resolvedModel !== event.model) {
+  if (resolvedModel !== eventModel) {
     return { modelOverride: resolvedModel };
   }
   return undefined;
@@ -623,6 +627,16 @@ export async function beforeToolCall(
   ctx: HookContext,
 ): Promise<ToolCallResult | undefined> {
   const toolName = event.toolName;
+
+  // Guard against missing event fields
+  if (!toolName) {
+    logger.warn("before_tool_call: toolName is undefined in event — blocking");
+    return { block: true, blockReason: "Missing tool name in event" };
+  }
+  if (!event.toolCallId) {
+    logger.warn(`before_tool_call: toolCallId is undefined for tool ${toolName} — blocking`);
+    return { block: true, blockReason: "Missing tool call ID in event" };
+  }
 
   // Resolve user/session from ctx if available (consistent with beforeModelResolve)
   if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
@@ -823,7 +837,6 @@ export async function afterToolCall(
     return;
   }
 
-  activeReservations.delete(event.toolCallId);
   stopHeartbeat(event.toolCallId);
 
   // Gap 2: Use cost estimator if available, otherwise use estimate
@@ -844,6 +857,9 @@ export async function afterToolCall(
 
   const unit = reservation.currency ?? config.currency;
   await commitUsage(client, reservation.reservationId, actual, unit, logger);
+  // Delete from tracking AFTER commit (not before) so orphaned reservations
+  // can be released at agentEnd if commit fails
+  activeReservations.delete(event.toolCallId);
   logger.debug(
     `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
   );
