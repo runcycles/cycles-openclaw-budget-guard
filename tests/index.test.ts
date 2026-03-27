@@ -40,6 +40,7 @@ vi.mock("../src/metrics-otlp.js", () => ({
 }));
 
 import registerPlugin, {
+  _resetStartupBanner,
   BudgetExhaustedError,
   ToolBudgetDeniedError,
 } from "../src/index.js";
@@ -61,6 +62,7 @@ describe("re-exported error types", () => {
 describe("plugin entrypoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetStartupBanner();
   });
 
   it("registers all 5 hooks when enabled", () => {
@@ -414,6 +416,28 @@ describe("plugin entrypoint", () => {
     );
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("Plugin config keys:"),
+    );
+  });
+
+  it("shows short branded message on subsequent inits", () => {
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+
+    // First call — full banner
+    registerPlugin(api);
+
+    // Second call — short message
+    vi.clearAllMocks();
+    mockResolveConfig.mockReturnValue(config);
+    registerPlugin(api);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Cycles Budget Guard initialized"),
     );
   });
 });

@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
-**Date:** 2026-03-26
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.6.1
+**Date:** 2026-03-27
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.2
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.1.1
 
@@ -12,7 +12,7 @@
 | Category | Pass | Issues |
 |----------|------|--------|
 | OpenClaw Plugin Contract | 4/4 | 0 |
-| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 60/60 | 0 |
+| Config Schema (plugin.json ↔ types.ts ↔ config.ts) | 62/62 | 0 |
 | Config Validation & Defaults | 5/5 | 0 |
 | Hook Registrations (index.ts ↔ hooks.ts) | 5/5 | 0 |
 | Hook Return Types | 5/5 | 0 |
@@ -27,7 +27,55 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 60 config properties (53 JSON-serializable + 7 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. Three runcycles spec inconsistencies and four additional code issues were identified and corrected. v0.4.0 adds critical install/config-loading fixes and startup diagnostics. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics on commits, aggressive cache invalidation, and OTLP adapter.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes.
+
+---
+
+## v0.7.x Changes (2026-03-27)
+
+### New features
+
+| Feature | Description | Location |
+|---|---|---|
+| Branded startup | `Cycles Budget Guard for OpenClaw v0.7.2` banner with URL at plugin init | `src/index.ts` |
+| Consistent naming | Internal prefix renamed from `cycles-budget-guard` to `openclaw-budget-guard` across logs, metadata keys, hook names, error prefixes, OTLP service name | All source files |
+| Single-source version | Build-time constant from `package.json` via tsup `define`. Bumping requires only `package.json` + `openclaw.plugin.json`. | `tsup.config.ts`, `src/version.ts` |
+| No process.env | Removed env var fallbacks to eliminate OpenClaw installer "dangerous code patterns" warning. Users use OpenClaw env var interpolation instead. | `src/config.ts` |
+| Model name auto-detect | Checks event fields, ctx.metadata, api.config, api.pluginConfig for model name. Falls back to `defaultModelName` config. Logs available keys at info level when not found. | `src/hooks.ts`, `src/index.ts` |
+| `defaultModelName` config | Fallback model name for OpenClaw which doesn't pass model in hook events. | `src/types.ts`, `src/config.ts`, `openclaw.plugin.json` |
+
+### Bug fixes
+
+| Fix | Description | Location |
+|---|---|---|
+| BudgetExhaustedError on healthy budget | Plugin threw "Budget exhausted" on any DENY regardless of actual budget level. Now only throws when budget is genuinely exhausted. | `src/hooks.ts:beforeModelResolve` |
+| Undefined model/tool names | Guard against undefined event fields with validation and fallbacks. | `src/hooks.ts` |
+| Commit-before-delete ordering | `activeReservations.delete()` moved after `commitUsage()` so failed commits are released at agentEnd. | `src/hooks.ts:afterToolCall` |
+| Release failures at debug level | Bumped to warn — operators need to see budget leak warnings. | `src/cycles.ts:releaseReservation` |
+| DryRunClient double-commit | Returns 409 RESERVATION_FINALIZED matching real Cycles server behavior. | `src/dry-run.ts` |
+| Division by zero guards | `checkBurnRate` guards `elapsed <= 0`, `checkExhaustionForecast` guards `burnRatePerMs <= 0`. | `src/hooks.ts` |
+
+### Config additions
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `defaultModelName` | string | — | Fallback model name when OpenClaw doesn't pass it in hook events |
+
+### Documentation
+
+- README rewritten: softened claims, surfaced fail-open behavior, added cost model explainer, production checklist, use-case guide
+- Content moved to `ARCHITECTURE.md`: project structure, architecture diagram, CI/publishing
+- Known Limitations cleaned: removed struck-through items, added heartbeat caveat
+
+### Test coverage
+
+| Metric | v0.6.0 | v0.7.2 |
+|---|---|---|
+| Test count | 289 | 299 |
+| Test files | 9 | 10 |
+| Statement coverage | 99.45% | 99.47% |
+| Branch coverage | 97.95% | 97.74% |
+| Line coverage | 100% | 100% |
 
 ---
 
