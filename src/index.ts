@@ -66,7 +66,10 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[openclaw-budget-guard] v${PLUGIN_VERSION} starting`,
+    ``,
+    `  Cycles Budget Guard for OpenClaw v${PLUGIN_VERSION}`,
+    `  https://runcycles.io`,
+    ``,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,

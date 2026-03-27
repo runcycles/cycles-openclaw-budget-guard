@@ -173,7 +173,8 @@ To test without a live Cycles server:
 After restarting OpenClaw, check the logs for:
 
 ```
-[openclaw-budget-guard] v0.6.1 starting
+  Cycles Budget Guard for OpenClaw v0.6.1
+  https://runcycles.io
   tenant: my-org
   cyclesBaseUrl: http://localhost:7878
   ...

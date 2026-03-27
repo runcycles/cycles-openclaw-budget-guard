@@ -226,7 +226,7 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(infoCall).toMatch(/v[\w.]+ starting/);
+    expect(infoCall).toContain("Cycles Budget Guard for OpenClaw");
     expect(infoCall).toContain("tenant: test-tenant");
     expect(infoCall).toContain("cyclesApiKey: ****-key");
     expect(infoCall).toContain("budgetId: my-app");
