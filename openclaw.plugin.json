@@ -1,7 +1,7 @@
 {
   "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -14,11 +14,11 @@
       },
       "cyclesBaseUrl": {
         "type": "string",
-        "description": "Base URL of the Cycles server (e.g. https://cycles.example.com). Falls back to CYCLES_BASE_URL env var."
+        "description": "Base URL of the Cycles server (e.g. https://cycles.example.com). Required."
       },
       "cyclesApiKey": {
         "type": "string",
-        "description": "API key for the Cycles server. Falls back to CYCLES_API_KEY env var."
+        "description": "API key for the Cycles server. Required."
       },
       "tenant": {
         "type": "string",

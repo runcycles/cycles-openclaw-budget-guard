@@ -119,7 +119,7 @@ function toOtlpPayload(batch: DataPoint[]): Record<string, unknown> {
         },
         scopeMetrics: [
           {
-            scope: { name: "cycles-budget-guard", version: "0.6.0" },
+            scope: { name: "cycles-budget-guard", version: "0.6.1" },
             metrics,
           },
         ],
