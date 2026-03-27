@@ -329,15 +329,14 @@ describe("beforeModelResolve", () => {
     expect(result).toBeUndefined();
   });
 
-  it("throws BudgetExhaustedError when exhausted + failClosed", async () => {
+  it("returns modelOverride block when exhausted + failClosed", async () => {
     setup({ failClosed: true });
     mockFetchBudgetState.mockResolvedValue(
       makeSnapshot({ level: "exhausted", remaining: 0 }),
     );
 
-    await expect(
-      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
-    ).rejects.toThrow(BudgetExhaustedError);
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 
   it("returns undefined when exhausted + !failClosed", async () => {
@@ -356,15 +355,14 @@ describe("beforeModelResolve", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it("throws when model reservation denied + failClosed + budget exhausted", async () => {
+  it("returns modelOverride block when reservation denied + failClosed + budget exhausted", async () => {
     setup({ failClosed: true });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "exhausted", remaining: 0 }));
     mockIsAllowed.mockReturnValue(false);
     mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "no_budget" });
 
-    await expect(
-      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
-    ).rejects.toThrow(BudgetExhaustedError);
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 
   it("allows when model reservation denied + failClosed but budget is healthy", async () => {
@@ -1615,7 +1613,7 @@ describe("limit_remaining_calls in beforeModelResolve", () => {
     vi.clearAllMocks();
   });
 
-  it("throws BudgetExhaustedError when limit reached and failClosed=true", async () => {
+  it("returns modelOverride block when limit reached and failClosed=true", async () => {
     setup({
       lowBudgetStrategies: ["limit_remaining_calls"],
       maxRemainingCallsWhenLow: 0,
@@ -1623,9 +1621,8 @@ describe("limit_remaining_calls in beforeModelResolve", () => {
     });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
 
-    await expect(
-      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
-    ).rejects.toThrow(BudgetExhaustedError);
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 
   it("allows when limit reached and failClosed=false", async () => {
