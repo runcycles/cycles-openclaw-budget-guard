@@ -139,8 +139,9 @@ export default function (api: OpenClawPluginApi): void {
       ?? asString(apiRecord.workerId)
       ?? asString(apiRecord.id)
       ?? asString(apiRecord.scope);
-    const contextLabel = context ? `, context=${context}` : `, instance=${++initCount}`;
-    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun}${contextLabel})`);
+    const instanceNum = ++initCount;
+    const contextPart = context ? `, context=${context}` : "";
+    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun}, instance=${instanceNum}${contextPart})`);
   }
 
   // Auto-detect model name from all available config surfaces if not set explicitly.
