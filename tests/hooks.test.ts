@@ -1981,7 +1981,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
 
     expect(result).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("model name is undefined"),
+      expect.stringContaining("cannot determine model name"),
     );
     expect(mockReserveBudget).not.toHaveBeenCalled();
   });

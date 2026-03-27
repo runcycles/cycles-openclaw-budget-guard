@@ -25,6 +25,7 @@ export interface BudgetGuardConfig {
   // Phase 1 — Gap 1: LLM call reservations
   modelBaseCosts: Record<string, number>;
   defaultModelCost: number;
+  defaultModelName?: string;
 
   // Phase 1 — Gap 2: Actual cost tracking
   costEstimator?: (context: CostEstimatorContext) => number | undefined;

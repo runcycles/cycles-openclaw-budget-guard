@@ -460,15 +460,17 @@ export async function beforeModelResolve(
 
   const snapshot = await getSnapshot(ctx);
 
-  // Guard against undefined model name — try common field names from OpenClaw
+  // Resolve model name from event — OpenClaw may pass it in different fields,
+  // or not at all (only 'prompt' key). Fall back to config.defaultModelName.
   const eventRecord = event as Record<string, unknown>;
   const eventModel = event.model
     ?? eventRecord.modelId as string | undefined
     ?? eventRecord.modelName as string | undefined
     ?? eventRecord.model_id as string | undefined
-    ?? eventRecord.model_name as string | undefined;
+    ?? eventRecord.model_name as string | undefined
+    ?? config.defaultModelName;
   if (!eventModel) {
-    logger.warn(`before_model_resolve: model name is undefined in event — skipping budget reservation. Event keys: ${Object.keys(event).join(", ")}`);
+    logger.warn(`before_model_resolve: cannot determine model name (event keys: ${Object.keys(event).join(", ")}). Set defaultModelName in plugin config to enable model budget tracking.`);
     attachBudgetStatus(ctx, snapshot);
     return undefined;
   }
