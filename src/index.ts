@@ -16,6 +16,7 @@ import {
   agentEnd,
 } from "./hooks.js";
 import { createOtlpEmitter } from "./metrics-otlp.js";
+import { PLUGIN_VERSION } from "./version.js";
 
 import type { OpenClawPluginApi } from "./types.js";
 
@@ -65,7 +66,7 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[cycles-budget-guard] v0.6.1 starting`,
+    `[cycles-budget-guard] v${PLUGIN_VERSION} starting`,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,
