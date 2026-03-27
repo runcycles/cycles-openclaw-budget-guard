@@ -357,15 +357,26 @@ describe("beforeModelResolve", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it("throws when model reservation denied + failClosed", async () => {
+  it("throws when model reservation denied + failClosed + budget exhausted", async () => {
     setup({ failClosed: true });
-    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "exhausted", remaining: 0 }));
     mockIsAllowed.mockReturnValue(false);
     mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "no_budget" });
 
     await expect(
       beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
     ).rejects.toThrow(BudgetExhaustedError);
+  });
+
+  it("allows when model reservation denied + failClosed but budget is healthy", async () => {
+    setup({ failClosed: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy", remaining: 50_000_000 }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "reservation_failed" });
+
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    // Should NOT throw — budget is healthy, deny is for another reason
+    expect(result).toBeUndefined();
   });
 
   it("allows when model reservation denied + !failClosed", async () => {
@@ -1943,20 +1954,36 @@ describe("v0.5.0 — model reserve-then-commit", () => {
     expect(mockFetchBudgetState).toHaveBeenCalledTimes(1);
   });
 
-  it("emits denied counter when model reservation is denied with failClosed=true", async () => {
+  it("emits denied counter when model reservation is denied", async () => {
     const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
     setup({ metricsEmitter: emitter, failClosed: true });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(false);
     mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "exhausted" });
 
-    await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).rejects.toThrow(BudgetExhaustedError);
+    // Budget is healthy so it should NOT throw, but should still emit the metric
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
     expect(emitter.counter).toHaveBeenCalledWith(
       "cycles.reservation.denied",
       1,
       expect.objectContaining({ kind: "model", reason: "exhausted" }),
     );
+  });
+
+  it("skips budget reservation when event.model is undefined", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    const { logger } = setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+
+    const result = await beforeModelResolve({ model: undefined as unknown as string }, makeHookContext());
+
+    expect(result).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("model name is undefined"),
+    );
+    expect(mockReserveBudget).not.toHaveBeenCalled();
   });
 
   it("handles context without metadata gracefully", async () => {
@@ -1977,7 +2004,8 @@ describe("v0.5.0 — model reserve-then-commit", () => {
     mockIsAllowed.mockReturnValue(false);
     mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [] });
 
-    await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).rejects.toThrow(BudgetExhaustedError);
+    // Budget is healthy, so deny should NOT throw — just log and continue
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
     expect(emitter.counter).toHaveBeenCalledWith(
       "cycles.reservation.denied",

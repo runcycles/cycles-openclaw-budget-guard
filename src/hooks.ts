@@ -459,12 +459,21 @@ export async function beforeModelResolve(
   if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
 
   const snapshot = await getSnapshot(ctx);
-  logger.debug(`before_model_resolve: model=${event.model} level=${snapshot.level}`);
+
+  // Guard against undefined model name — OpenClaw may pass it differently
+  const eventModel = event.model ?? (event as Record<string, unknown>).modelId as string | undefined;
+  if (!eventModel) {
+    logger.warn("before_model_resolve: model name is undefined in event — skipping budget reservation");
+    attachBudgetStatus(ctx, snapshot);
+    return undefined;
+  }
+
+  logger.debug(`before_model_resolve: model=${eventModel} level=${snapshot.level}`);
 
   // Gap 12: Attach status for end-user visibility
   attachBudgetStatus(ctx, snapshot);
 
-  let resolvedModel = event.model;
+  let resolvedModel = eventModel;
 
   if (snapshot.level === "low") {
     // Gap 4: Chained model fallbacks
@@ -522,19 +531,17 @@ export async function beforeModelResolve(
   });
 
   if (!isAllowed(result.decision)) {
-    if (config.failClosed) {
-      logger.warn(
-        `Model reservation denied for ${resolvedModel} (decision=${result.decision})`,
-      );
-      emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: result.reasonCode ?? "denied" });
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    const reason = result.reasonCode ?? "denied";
+    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
+    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+
+    if (config.failClosed && snapshot.level === "exhausted") {
+      logger.warn(`Model reservation denied for ${resolvedModel} — budget exhausted (remaining: ${snapshot.remaining}, reason: ${reason})`);
       throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
     }
-    logger.warn(
-      `Model reservation denied for ${resolvedModel}, failClosed=false — allowing`,
-    );
-    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason: "denied_fail_open" });
-    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+
+    // Budget is not exhausted but reservation was denied (malformed request, rate limit, etc.)
+    logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue`);
   } else {
     totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
