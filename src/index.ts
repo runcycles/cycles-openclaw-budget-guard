@@ -39,6 +39,14 @@ export type {
 export { createOtlpEmitter } from "./metrics-otlp.js";
 export type { OtlpEmitterOptions } from "./metrics-otlp.js";
 
+/** @internal Exported for testing only. */
+export let startupBannerShown = false;
+
+/** @internal Reset startup banner flag (for testing). */
+export function _resetStartupBanner(): void {
+  startupBannerShown = false;
+}
+
 export default function (api: OpenClawPluginApi): void {
   // OpenClaw provides plugin-specific config on api.pluginConfig (from
   // plugins.entries.<id>.config in openclaw.json). Fall back to api.config
@@ -61,58 +69,66 @@ export default function (api: OpenClawPluginApi): void {
     return;
   }
 
-  // Log resolved config summary on startup so operators can verify settings.
-  const maskedKey = config.cyclesApiKey
-    ? `****${config.cyclesApiKey.slice(-4)}`
-    : "(not set)";
-  const lines = [
-    ``,
-    `  Cycles Budget Guard for OpenClaw v${PLUGIN_VERSION}`,
-    `  https://runcycles.io`,
-    ``,
-    `  tenant: ${config.tenant}`,
-    `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
-    `  cyclesApiKey: ${maskedKey}`,
-    `  currency: ${config.currency}`,
-    `  failClosed: ${config.failClosed}`,
-    `  dryRun: ${config.dryRun}`,
-    `  logLevel: ${config.logLevel}`,
-    `  lowBudgetThreshold: ${config.lowBudgetThreshold}`,
-    `  exhaustedThreshold: ${config.exhaustedThreshold}`,
-  ];
-  if (config.budgetId) lines.push(`  budgetId: ${config.budgetId}`);
-  if (Object.keys(config.modelFallbacks).length > 0)
-    lines.push(`  modelFallbacks: ${Object.keys(config.modelFallbacks).join(", ")}`);
-  if (Object.keys(config.toolBaseCosts).length > 0)
-    lines.push(`  toolBaseCosts: ${Object.keys(config.toolBaseCosts).join(", ")}`);
-  if (config.toolAllowlist) lines.push(`  toolAllowlist: ${config.toolAllowlist.join(", ")}`);
-  if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
-  if (config.toolCallLimits && Object.keys(config.toolCallLimits).length > 0)
-    lines.push(`  toolCallLimits: ${Object.entries(config.toolCallLimits).map(([k, v]) => `${k}=${v}`).join(", ")}`);
-  api.logger.info(lines.join("\n"));
+  // OpenClaw may call the plugin entrypoint multiple times (once per channel/worker).
+  // Show the full banner only once; subsequent inits get a short one-liner.
+  if (!startupBannerShown) {
+    startupBannerShown = true;
 
-  // Warn about common misconfigurations so operators catch issues early.
-  if (
-    config.lowBudgetStrategies.includes("downgrade_model") &&
-    Object.keys(config.modelFallbacks).length === 0
-  ) {
-    api.logger.warn(
-      "[openclaw-budget-guard] Strategy 'downgrade_model' is enabled but no modelFallbacks configured — model downgrade will have no effect",
-    );
-  }
-  if (
-    config.lowBudgetStrategies.includes("disable_expensive_tools") &&
-    config.expensiveToolThreshold === undefined &&
-    Object.keys(config.toolBaseCosts).length === 0
-  ) {
-    api.logger.warn(
-      "[openclaw-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
-    );
-  }
-  if (Object.keys(config.toolBaseCosts).length === 0) {
-    api.logger.info(
-      "[openclaw-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
-    );
+    const maskedKey = config.cyclesApiKey
+      ? `****${config.cyclesApiKey.slice(-4)}`
+      : "(not set)";
+    const lines = [
+      ``,
+      `  Cycles Budget Guard for OpenClaw v${PLUGIN_VERSION}`,
+      `  https://runcycles.io`,
+      ``,
+      `  tenant: ${config.tenant}`,
+      `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
+      `  cyclesApiKey: ${maskedKey}`,
+      `  currency: ${config.currency}`,
+      `  failClosed: ${config.failClosed}`,
+      `  dryRun: ${config.dryRun}`,
+      `  logLevel: ${config.logLevel}`,
+      `  lowBudgetThreshold: ${config.lowBudgetThreshold}`,
+      `  exhaustedThreshold: ${config.exhaustedThreshold}`,
+    ];
+    if (config.budgetId) lines.push(`  budgetId: ${config.budgetId}`);
+    if (config.defaultModelName) lines.push(`  defaultModelName: ${config.defaultModelName}`);
+    if (Object.keys(config.modelFallbacks).length > 0)
+      lines.push(`  modelFallbacks: ${Object.keys(config.modelFallbacks).join(", ")}`);
+    if (Object.keys(config.toolBaseCosts).length > 0)
+      lines.push(`  toolBaseCosts: ${Object.keys(config.toolBaseCosts).join(", ")}`);
+    if (config.toolAllowlist) lines.push(`  toolAllowlist: ${config.toolAllowlist.join(", ")}`);
+    if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
+    if (config.toolCallLimits && Object.keys(config.toolCallLimits).length > 0)
+      lines.push(`  toolCallLimits: ${Object.entries(config.toolCallLimits).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    api.logger.info(lines.join("\n"));
+
+    // Warn about common misconfigurations so operators catch issues early.
+    if (
+      config.lowBudgetStrategies.includes("downgrade_model") &&
+      Object.keys(config.modelFallbacks).length === 0
+    ) {
+      api.logger.warn(
+        "[openclaw-budget-guard] Strategy 'downgrade_model' is enabled but no modelFallbacks configured — model downgrade will have no effect",
+      );
+    }
+    if (
+      config.lowBudgetStrategies.includes("disable_expensive_tools") &&
+      config.expensiveToolThreshold === undefined &&
+      Object.keys(config.toolBaseCosts).length === 0
+    ) {
+      api.logger.warn(
+        "[openclaw-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
+      );
+    }
+    if (Object.keys(config.toolBaseCosts).length === 0) {
+      api.logger.info(
+        "[openclaw-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
+      );
+    }
+  } else {
+    api.logger.info(`[openclaw-budget-guard] Initialized (tenant=${config.tenant})`);
   }
 
   // Auto-detect model name from all available config surfaces if not set explicitly.

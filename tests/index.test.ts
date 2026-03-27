@@ -40,6 +40,7 @@ vi.mock("../src/metrics-otlp.js", () => ({
 }));
 
 import registerPlugin, {
+  _resetStartupBanner,
   BudgetExhaustedError,
   ToolBudgetDeniedError,
 } from "../src/index.js";
@@ -61,6 +62,7 @@ describe("re-exported error types", () => {
 describe("plugin entrypoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetStartupBanner();
   });
 
   it("registers all 5 hooks when enabled", () => {

@@ -130,12 +130,9 @@ export function initHooks(
   // Gap 10: Dry-run mode
   if (config.dryRun) {
     client = new DryRunClient(config.dryRunBudget, config.currency) as unknown as CyclesClient;
-    logger.info(
-      `[DRY-RUN] Plugin initialized with simulated budget=${config.dryRunBudget} tenant=${config.tenant}`,
-    );
+    logger.info(`[DRY-RUN] Simulated budget=${config.dryRunBudget} ${config.currency}`);
   } else {
     client = createCyclesClient(config);
-    logger.info(`Plugin initialized tenant=${config.tenant}`);
   }
 
   cachedSnapshot = undefined;
