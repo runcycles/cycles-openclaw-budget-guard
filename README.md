@@ -699,6 +699,23 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - Verify the plugin is enabled: `openclaw plugins list`
 - Check that `openclaw.plugin.json` is included in the installed package
 
+**"Unknown model: openai/\_\_cycles\_budget\_exhausted\_\_" or "Budget exhausted"**
+
+Your budget has run out. To resume:
+
+1. **Fund the budget** via the Cycles Admin API:
+   ```bash
+   curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org&unit=USD_MICROCENTS" \
+     -H "X-Cycles-API-Key: your-admin-key" \
+     -H "Content-Type: application/json" \
+     -d '{"operation": "CREDIT", "amount": 50000000, "idempotency_key": "topup-001"}'
+   ```
+   This adds 50,000,000 units ($0.50) to the budget. Adjust the `scope` to match your `tenant` (and `budgetId` if set).
+
+2. **Start a new agent session** — the plugin fetches fresh budget state at the start of each session.
+
+For details on budget management, see [Budget Allocation and Management](https://runcycles.io/how-to/budget-allocation-and-management-in-cycles).
+
 **"cyclesBaseUrl is required" error**
 - Set `cyclesBaseUrl` in your plugin config (use `"${CYCLES_BASE_URL}"` for env var interpolation)
 
