@@ -379,4 +379,41 @@ describe("plugin entrypoint", () => {
 
     expect(mockCreateOtlpEmitter).not.toHaveBeenCalled();
   });
+
+  it("auto-detects model name from api.config.model", () => {
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: { model: "openai/gpt-5-nano" }, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    expect(config.defaultModelName).toBe("openai/gpt-5-nano");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Auto-detected model: openai/gpt-5-nano"),
+    );
+  });
+
+  it("logs system and plugin config keys when model name cannot be detected", () => {
+    const config = makeConfig({
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+    });
+    mockResolveConfig.mockReturnValue(config);
+
+    const logger = makeLogger();
+    const api = { config: { noModelHere: true }, pluginConfig: { tenant: "t" }, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    expect(config.defaultModelName).toBeUndefined();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("System config keys:"),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Plugin config keys:"),
+    );
+  });
 });
