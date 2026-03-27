@@ -42,9 +42,13 @@ export type { OtlpEmitterOptions } from "./metrics-otlp.js";
 /** @internal Exported for testing only. */
 export let startupBannerShown = false;
 
+/** @internal Counter for differentiating init instances when no context ID is available. */
+let initCount = 0;
+
 /** @internal Reset startup banner flag (for testing). */
 export function _resetStartupBanner(): void {
   startupBannerShown = false;
+  initCount = 0;
 }
 
 export default function (api: OpenClawPluginApi): void {
@@ -128,7 +132,16 @@ export default function (api: OpenClawPluginApi): void {
       );
     }
   } else {
-    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun})`);
+    // Try to extract a context identifier from the api object to differentiate channels
+    const apiRecord = api as unknown as Record<string, unknown>;
+    const context = asString(apiRecord.channelId)
+      ?? asString(apiRecord.channel)
+      ?? asString(apiRecord.workerId)
+      ?? asString(apiRecord.id)
+      ?? asString(apiRecord.name)
+      ?? asString(apiRecord.scope);
+    const contextLabel = context ? `, context=${context}` : `, instance=${++initCount}`;
+    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun}${contextLabel})`);
   }
 
   // Auto-detect model name from all available config surfaces if not set explicitly.
