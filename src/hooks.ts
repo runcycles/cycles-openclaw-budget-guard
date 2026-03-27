@@ -226,7 +226,7 @@ function invalidateSnapshotCache(): void {
 /** Gap 12: Attach budget status to ctx.metadata for end-user visibility. */
 function attachBudgetStatus(ctx: HookContext, snapshot: BudgetSnapshot): void {
   if (ctx.metadata) {
-    ctx.metadata["cycles-budget-guard-status"] = {
+    ctx.metadata["openclaw-budget-guard-status"] = {
       level: snapshot.level,
       remaining: snapshot.remaining,
       allocated: snapshot.allocated,
@@ -947,7 +947,7 @@ export async function agentEnd(
 
   // Attach to context metadata if available
   if (ctx.metadata) {
-    ctx.metadata["cycles-budget-guard"] = {
+    ctx.metadata["openclaw-budget-guard"] = {
       ...summary,
       avgToolCost: forecast.avgToolCost,
       avgModelCost: forecast.avgModelCost,

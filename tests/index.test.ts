@@ -121,7 +121,7 @@ describe("plugin entrypoint", () => {
     expect(priorities["agent_end"]).toBe(100);
   });
 
-  it("hook names include cycles-budget-guard: prefix", () => {
+  it("hook names include openclaw-budget-guard: prefix", () => {
     mockResolveConfig.mockReturnValue(makeConfig());
 
     const names: string[] = [];
@@ -137,7 +137,7 @@ describe("plugin entrypoint", () => {
 
     expect(names).toHaveLength(5);
     for (const name of names) {
-      expect(name).toMatch(/^cycles-budget-guard:/);
+      expect(name).toMatch(/^openclaw-budget-guard:/);
     }
   });
 
@@ -172,7 +172,7 @@ describe("plugin entrypoint", () => {
 
   it("logs warning and skips registration when config is missing", () => {
     mockResolveConfig.mockImplementation(() => {
-      throw new Error("[cycles-budget-guard] tenant is required in config");
+      throw new Error("[openclaw-budget-guard] tenant is required in config");
     });
 
     const logger = makeLogger();
@@ -226,7 +226,7 @@ describe("plugin entrypoint", () => {
 
     registerPlugin(api);
     const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(infoCall).toContain("v0.6.1 starting");
+    expect(infoCall).toContain("Cycles Budget Guard for OpenClaw");
     expect(infoCall).toContain("tenant: test-tenant");
     expect(infoCall).toContain("cyclesApiKey: ****-key");
     expect(infoCall).toContain("budgetId: my-app");

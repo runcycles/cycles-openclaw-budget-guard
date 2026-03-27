@@ -1,11 +1,11 @@
-/** Simple leveled logger prefixed with [cycles-budget-guard]. */
+/** Simple leveled logger prefixed with [openclaw-budget-guard]. */
 
 import type { OpenClawLogger } from "./types.js";
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 type Level = keyof typeof LEVELS;
 
-const PREFIX = "[cycles-budget-guard]";
+const PREFIX = "[openclaw-budget-guard]";
 
 export function createLogger(minLevel: string): OpenClawLogger {
   const threshold = LEVELS[(minLevel as Level)] ?? LEVELS.info;

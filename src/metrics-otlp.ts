@@ -7,6 +7,7 @@
  */
 
 import type { MetricsEmitter } from "./types.js";
+import { PLUGIN_VERSION } from "./version.js";
 
 interface DataPoint {
   name: string;
@@ -114,12 +115,12 @@ function toOtlpPayload(batch: DataPoint[]): Record<string, unknown> {
       {
         resource: {
           attributes: [
-            { key: "service.name", value: { stringValue: "cycles-budget-guard" } },
+            { key: "service.name", value: { stringValue: "openclaw-budget-guard" } },
           ],
         },
         scopeMetrics: [
           {
-            scope: { name: "cycles-budget-guard", version: "0.6.1" },
+            scope: { name: "openclaw-budget-guard", version: PLUGIN_VERSION },
             metrics,
           },
         ],

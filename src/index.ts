@@ -16,6 +16,7 @@ import {
   agentEnd,
 } from "./hooks.js";
 import { createOtlpEmitter } from "./metrics-otlp.js";
+import { PLUGIN_VERSION } from "./version.js";
 
 import type { OpenClawPluginApi } from "./types.js";
 
@@ -51,12 +52,12 @@ export default function (api: OpenClawPluginApi): void {
     // During plugin install, config may not be available yet.
     // Log and skip registration so install can complete.
     const msg = err instanceof Error ? err.message : String(err);
-    api.logger.warn(`[cycles-budget-guard] Skipping registration: ${msg}`);
+    api.logger.warn(`[openclaw-budget-guard] Skipping registration: ${msg}`);
     return;
   }
 
   if (!config.enabled) {
-    api.logger.info("[cycles-budget-guard] Plugin disabled via config");
+    api.logger.info("[openclaw-budget-guard] Plugin disabled via config");
     return;
   }
 
@@ -65,7 +66,10 @@ export default function (api: OpenClawPluginApi): void {
     ? `****${config.cyclesApiKey.slice(-4)}`
     : "(not set)";
   const lines = [
-    `[cycles-budget-guard] v0.6.1 starting`,
+    ``,
+    `  Cycles Budget Guard for OpenClaw v${PLUGIN_VERSION}`,
+    `  https://runcycles.io`,
+    ``,
     `  tenant: ${config.tenant}`,
     `  cyclesBaseUrl: ${config.cyclesBaseUrl}`,
     `  cyclesApiKey: ${maskedKey}`,
@@ -93,7 +97,7 @@ export default function (api: OpenClawPluginApi): void {
     Object.keys(config.modelFallbacks).length === 0
   ) {
     api.logger.warn(
-      "[cycles-budget-guard] Strategy 'downgrade_model' is enabled but no modelFallbacks configured — model downgrade will have no effect",
+      "[openclaw-budget-guard] Strategy 'downgrade_model' is enabled but no modelFallbacks configured — model downgrade will have no effect",
     );
   }
   if (
@@ -102,12 +106,12 @@ export default function (api: OpenClawPluginApi): void {
     Object.keys(config.toolBaseCosts).length === 0
   ) {
     api.logger.warn(
-      "[cycles-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
+      "[openclaw-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
     );
   }
   if (Object.keys(config.toolBaseCosts).length === 0) {
     api.logger.info(
-      "[cycles-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
+      "[openclaw-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
     );
   }
 
@@ -118,34 +122,34 @@ export default function (api: OpenClawPluginApi): void {
       headers: config.otlpMetricsHeaders,
     });
     api.logger.info(
-      `[cycles-budget-guard] OTLP metrics emitter configured → ${config.otlpMetricsEndpoint}`,
+      `[openclaw-budget-guard] OTLP metrics emitter configured → ${config.otlpMetricsEndpoint}`,
     );
   }
 
   initHooks(config, api.logger);
 
   api.on("before_model_resolve", beforeModelResolve, {
-    name: "cycles-budget-guard:before_model_resolve",
+    name: "openclaw-budget-guard:before_model_resolve",
     priority: 10,
   });
 
   api.on("before_prompt_build", beforePromptBuild, {
-    name: "cycles-budget-guard:before_prompt_build",
+    name: "openclaw-budget-guard:before_prompt_build",
     priority: 10,
   });
 
   api.on("before_tool_call", beforeToolCall, {
-    name: "cycles-budget-guard:before_tool_call",
+    name: "openclaw-budget-guard:before_tool_call",
     priority: 10,
   });
 
   api.on("after_tool_call", afterToolCall, {
-    name: "cycles-budget-guard:after_tool_call",
+    name: "openclaw-budget-guard:after_tool_call",
     priority: 10,
   });
 
   api.on("agent_end", agentEnd, {
-    name: "cycles-budget-guard:agent_end",
+    name: "openclaw-budget-guard:agent_end",
     priority: 100,
   });
 }

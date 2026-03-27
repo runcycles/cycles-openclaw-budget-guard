@@ -173,7 +173,8 @@ To test without a live Cycles server:
 After restarting OpenClaw, check the logs for:
 
 ```
-[cycles-budget-guard] v0.6.1 starting
+  Cycles Budget Guard for OpenClaw v0.6.1
+  https://runcycles.io
   tenant: my-org
   cyclesBaseUrl: http://localhost:7878
   ...
@@ -182,7 +183,7 @@ After restarting OpenClaw, check the logs for:
 Run your agent and look for budget activity:
 
 ```
-[cycles-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
+[openclaw-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
 ```
 
 If you see this, the plugin is actively checking budget on every model and tool call.
@@ -570,7 +571,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 Fetches budget state and reserves budget for the model call. The reservation is held open and committed later (in `before_prompt_build` or at `agent_end`), allowing the optional `modelCostEstimator` callback to reconcile estimated vs actual costs. When budget is low:
 - Applies model fallbacks (including chained fallbacks like `opus → [sonnet, haiku]`)
 - Enforces `limit_remaining_calls` if configured
-- Attaches budget status metadata to `ctx.metadata["cycles-budget-guard-status"]`
+- Attaches budget status metadata to `ctx.metadata["openclaw-budget-guard-status"]`
 
 When budget is exhausted and `failClosed=true`, throws `BudgetExhaustedError`.
 
@@ -606,7 +607,7 @@ Commits the reservation with actual cost. Uses the `costEstimator` callback if c
 2. Fetches final budget state
 3. Builds session summary with cost breakdown, forecasts, and timing
 4. Calls `onSessionEnd` callback and fires analytics webhook if configured
-5. Attaches summary to `ctx.metadata["cycles-budget-guard"]`
+5. Attaches summary to `ctx.metadata["openclaw-budget-guard"]`
 
 ### Chained Model Fallbacks
 
