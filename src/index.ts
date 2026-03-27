@@ -128,7 +128,7 @@ export default function (api: OpenClawPluginApi): void {
       );
     }
   } else {
-    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant})`);
+    api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun})`);
   }
 
   // Auto-detect model name from all available config surfaces if not set explicitly.
