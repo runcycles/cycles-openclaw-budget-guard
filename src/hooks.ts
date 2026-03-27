@@ -460,10 +460,15 @@ export async function beforeModelResolve(
 
   const snapshot = await getSnapshot(ctx);
 
-  // Guard against undefined model name — OpenClaw may pass it differently
-  const eventModel = event.model ?? (event as Record<string, unknown>).modelId as string | undefined;
+  // Guard against undefined model name — try common field names from OpenClaw
+  const eventRecord = event as Record<string, unknown>;
+  const eventModel = event.model
+    ?? eventRecord.modelId as string | undefined
+    ?? eventRecord.modelName as string | undefined
+    ?? eventRecord.model_id as string | undefined
+    ?? eventRecord.model_name as string | undefined;
   if (!eventModel) {
-    logger.warn("before_model_resolve: model name is undefined in event — skipping budget reservation");
+    logger.warn(`before_model_resolve: model name is undefined in event — skipping budget reservation. Event keys: ${Object.keys(event).join(", ")}`);
     attachBudgetStatus(ctx, snapshot);
     return undefined;
   }
