@@ -138,7 +138,6 @@ export default function (api: OpenClawPluginApi): void {
       ?? asString(apiRecord.channel)
       ?? asString(apiRecord.workerId)
       ?? asString(apiRecord.id)
-      ?? asString(apiRecord.name)
       ?? asString(apiRecord.scope);
     const contextLabel = context ? `, context=${context}` : `, instance=${++initCount}`;
     api.logger.info(`Cycles Budget Guard initialized (tenant=${config.tenant}, dryRun=${config.dryRun}${contextLabel})`);
