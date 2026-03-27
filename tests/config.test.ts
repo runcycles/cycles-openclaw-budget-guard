@@ -2,28 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { resolveConfig } from "../src/config.js";
 
 describe("resolveConfig", () => {
-  const savedEnv: Record<string, string | undefined> = {};
-
-  beforeEach(() => {
-    savedEnv.CYCLES_BASE_URL = process.env.CYCLES_BASE_URL;
-    savedEnv.CYCLES_API_KEY = process.env.CYCLES_API_KEY;
-    delete process.env.CYCLES_BASE_URL;
-    delete process.env.CYCLES_API_KEY;
-  });
-
-  afterEach(() => {
-    if (savedEnv.CYCLES_BASE_URL !== undefined) {
-      process.env.CYCLES_BASE_URL = savedEnv.CYCLES_BASE_URL;
-    } else {
-      delete process.env.CYCLES_BASE_URL;
-    }
-    if (savedEnv.CYCLES_API_KEY !== undefined) {
-      process.env.CYCLES_API_KEY = savedEnv.CYCLES_API_KEY;
-    } else {
-      delete process.env.CYCLES_API_KEY;
-    }
-  });
-
   const minValid = {
     cyclesBaseUrl: "http://localhost:7878",
     cyclesApiKey: "test-key",
@@ -110,25 +88,16 @@ describe("resolveConfig", () => {
     ).toThrow("tenant is required");
   });
 
-  it("falls back to CYCLES_BASE_URL env var", () => {
-    process.env.CYCLES_BASE_URL = "http://from-env";
-    const cfg = resolveConfig({ cyclesApiKey: "k", tenant: "t" });
-    expect(cfg.cyclesBaseUrl).toBe("http://from-env");
+  it("throws when cyclesBaseUrl is missing", () => {
+    expect(() => resolveConfig({ cyclesApiKey: "k", tenant: "t" })).toThrow(
+      "cyclesBaseUrl is required",
+    );
   });
 
-  it("falls back to CYCLES_API_KEY env var", () => {
-    process.env.CYCLES_API_KEY = "env-key";
-    const cfg = resolveConfig({ cyclesBaseUrl: "http://x", tenant: "t" });
-    expect(cfg.cyclesApiKey).toBe("env-key");
-  });
-
-  it("config value takes precedence over env var", () => {
-    process.env.CYCLES_BASE_URL = "http://from-env";
-    const cfg = resolveConfig({
-      ...minValid,
-      cyclesBaseUrl: "http://from-config",
-    });
-    expect(cfg.cyclesBaseUrl).toBe("http://from-config");
+  it("throws when cyclesApiKey is missing", () => {
+    expect(() => resolveConfig({ cyclesBaseUrl: "http://x", tenant: "t" })).toThrow(
+      "cyclesApiKey is required",
+    );
   });
 
   it("throws when exhaustedThreshold >= lowBudgetThreshold", () => {
@@ -185,14 +154,14 @@ describe("resolveConfig", () => {
     expect(cfg.logLevel).toBe("error");
   });
 
-  it("ignores non-string values for string fields", () => {
-    process.env.CYCLES_BASE_URL = "http://fallback";
-    const cfg = resolveConfig({
-      cyclesBaseUrl: 12345 as unknown as string,
-      cyclesApiKey: "k",
-      tenant: "t",
-    });
-    expect(cfg.cyclesBaseUrl).toBe("http://fallback");
+  it("throws when cyclesBaseUrl is a non-string value", () => {
+    expect(() =>
+      resolveConfig({
+        cyclesBaseUrl: 12345 as unknown as string,
+        cyclesApiKey: "k",
+        tenant: "t",
+      }),
+    ).toThrow("cyclesBaseUrl is required");
   });
 
   it("ignores array for record fields, uses default", () => {

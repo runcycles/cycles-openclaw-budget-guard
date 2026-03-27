@@ -119,14 +119,32 @@ That's it — the plugin uses sensible defaults for everything else. The agent w
 
 > **Need an API key?** API keys are created via the Cycles Admin Server (port 7979). See the [deployment guide](https://runcycles.io/quickstart/deploying-the-full-cycles-stack#step-3-create-an-api-key) to create one, or see [API Key Management](https://runcycles.io/how-to/api-key-management-in-cycles) for details.
 
-### 4. (Optional) Use environment variables for secrets
+### 4. (Optional) Keep secrets out of config files
+
+Use OpenClaw's env var interpolation to avoid hardcoding API keys:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-budget-guard": {
+        "config": {
+          "cyclesBaseUrl": "${CYCLES_BASE_URL}",
+          "cyclesApiKey": "${CYCLES_API_KEY}",
+          "tenant": "my-org"
+        }
+      }
+    }
+  }
+}
+```
+
+Then set the env vars in your shell or CI:
 
 ```bash
 export CYCLES_BASE_URL="http://localhost:7878"
 export CYCLES_API_KEY="cyc_your_api_key_here"
 ```
-
-Then your config only needs `"config": { "tenant": "my-org" }`.
 
 ### 5. (Optional) Try dry-run mode
 
@@ -377,8 +395,8 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | boolean | `true` | Master switch — set to `false` to disable the plugin |
-| `cyclesBaseUrl` | string | — | Cycles server URL (required, or `CYCLES_BASE_URL` env var) |
-| `cyclesApiKey` | string | — | Cycles API key (required, or `CYCLES_API_KEY` env var) |
+| `cyclesBaseUrl` | string | — | Cycles server URL (required) |
+| `cyclesApiKey` | string | — | Cycles API key (required) |
 | `tenant` | string | — | Cycles tenant identifier (required) |
 | `budgetId` | string | — | Optional app-level scope for balance queries and reservations |
 | `currency` | string | `USD_MICROCENTS` | Default budget unit for all reservations |
@@ -681,7 +699,7 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - Check that `openclaw.plugin.json` is included in the installed package
 
 **"cyclesBaseUrl is required" error**
-- Set `cyclesBaseUrl` in config or export `CYCLES_BASE_URL` env var
+- Set `cyclesBaseUrl` in your plugin config (use `"${CYCLES_BASE_URL}"` for env var interpolation)
 
 **Budget always shows "healthy"**
 - Verify `currency`, `tenant`, and `budgetId` match your Cycles setup

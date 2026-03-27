@@ -5,22 +5,18 @@ import type { BudgetGuardConfig } from "./types.js";
 export function resolveConfig(
   raw: Record<string, unknown>,
 ): BudgetGuardConfig {
-  const cyclesBaseUrl =
-    asString(raw.cyclesBaseUrl) ??
-    process.env.CYCLES_BASE_URL;
-  const cyclesApiKey =
-    asString(raw.cyclesApiKey) ??
-    process.env.CYCLES_API_KEY;
+  const cyclesBaseUrl = asString(raw.cyclesBaseUrl);
+  const cyclesApiKey = asString(raw.cyclesApiKey);
   const tenant = asString(raw.tenant);
 
   if (!cyclesBaseUrl) {
     throw new Error(
-      "[cycles-budget-guard] cyclesBaseUrl is required (config or CYCLES_BASE_URL env var)",
+      "[cycles-budget-guard] cyclesBaseUrl is required in plugin config",
     );
   }
   if (!cyclesApiKey) {
     throw new Error(
-      "[cycles-budget-guard] cyclesApiKey is required (config or CYCLES_API_KEY env var)",
+      "[cycles-budget-guard] cyclesApiKey is required in plugin config",
     );
   }
   if (!tenant) {
