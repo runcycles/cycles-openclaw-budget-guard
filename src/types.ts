@@ -320,6 +320,7 @@ export interface ModelResolveEvent {
 /** Return value from before_model_resolve to override the model. */
 export interface ModelResolveResult {
   modelOverride?: string;
+  providerOverride?: string;
 }
 
 /** Event for the before_prompt_build hook. */

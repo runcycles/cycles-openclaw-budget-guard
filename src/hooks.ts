@@ -512,8 +512,8 @@ export async function beforeModelResolve(
     if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
       logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       if (config.failClosed) {
-        logger.warn(`Call limit reached for model ${eventModel} — budget is low, blocking execution`);
-        throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
+        logger.warn(`Call limit reached for model ${eventModel} — budget is low, blocking model call`);
+        return { modelOverride: "__cycles_budget_exhausted__" };
       }
       logger.warn("Low budget call limit reached, failClosed=false — allowing");
     }
@@ -522,10 +522,10 @@ export async function beforeModelResolve(
   if (snapshot.level === "exhausted") {
     if (config.failClosed) {
       logger.warn(
-        `Budget exhausted (${snapshot.remaining} remaining) — blocking model resolve for ${eventModel}`,
+        `Budget exhausted (${snapshot.remaining} remaining) — blocking model call for ${eventModel}`,
       );
       logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
-      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
+      return { modelOverride: "__cycles_budget_exhausted__" };
     }
     logger.warn(
       `Budget exhausted (${snapshot.remaining} remaining) — failClosed=false, allowing ${eventModel}`,
@@ -549,7 +549,7 @@ export async function beforeModelResolve(
     emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
     logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
 
-    // Reservation denied but budget level was already checked above (exhausted throws at line 515).
+    // Reservation denied but budget level was already checked above (exhausted returns modelOverride block).
     // If we reach here, budget is healthy/low but the reservation failed for another reason.
     logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue`);
   } else {
