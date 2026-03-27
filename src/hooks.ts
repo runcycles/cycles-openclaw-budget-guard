@@ -536,12 +536,8 @@ export async function beforeModelResolve(
     emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
     logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
 
-    if (config.failClosed && snapshot.level === "exhausted") {
-      logger.warn(`Model reservation denied for ${resolvedModel} — budget exhausted (remaining: ${snapshot.remaining}, reason: ${reason})`);
-      throw new BudgetExhaustedError(snapshot.remaining, { tenant: config.tenant, budgetId: config.budgetId });
-    }
-
-    // Budget is not exhausted but reservation was denied (malformed request, rate limit, etc.)
+    // Reservation denied but budget level was already checked above (exhausted throws at line 515).
+    // If we reach here, budget is healthy/low but the reservation failed for another reason.
     logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue`);
   } else {
     totalReservationsMade++;
