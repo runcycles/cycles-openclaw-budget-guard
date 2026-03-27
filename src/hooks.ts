@@ -841,7 +841,6 @@ export async function afterToolCall(
     return;
   }
 
-  activeReservations.delete(event.toolCallId);
   stopHeartbeat(event.toolCallId);
 
   // Gap 2: Use cost estimator if available, otherwise use estimate
@@ -862,6 +861,9 @@ export async function afterToolCall(
 
   const unit = reservation.currency ?? config.currency;
   await commitUsage(client, reservation.reservationId, actual, unit, logger);
+  // Delete from tracking AFTER commit (not before) so orphaned reservations
+  // can be released at agentEnd if commit fails
+  activeReservations.delete(event.toolCallId);
   logger.debug(
     `after_tool_call: committed ${actual} for tool=${reservation.toolName}`,
   );

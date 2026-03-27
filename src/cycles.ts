@@ -273,11 +273,11 @@ export async function releaseReservation(
     };
     const response = await client.releaseReservation(reservationId, body);
     if (!response.isSuccess) {
-      logger.debug(
-        `Release for reservation ${reservationId} returned status ${response.status}`,
+      logger.warn(
+        `Release for reservation ${reservationId} returned status ${response.status} — budget may remain locked until TTL expires`,
       );
     }
   } catch (err) {
-    logger.debug(`Release failed for reservation ${reservationId}:`, err);
+    logger.warn(`Release failed for reservation ${reservationId} — budget may remain locked until TTL expires:`, err);
   }
 }

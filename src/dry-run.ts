@@ -71,7 +71,10 @@ export class DryRunClient {
   }
 
   async commitReservation(reservationId: string, body: Record<string, unknown>) {
-    const reservedAmount = this.reservations.get(reservationId) ?? 0;
+    if (!this.reservations.has(reservationId)) {
+      return { isSuccess: false, status: 409, errorMessage: "RESERVATION_FINALIZED" };
+    }
+    const reservedAmount = this.reservations.get(reservationId)!;
     const actual = (body.actual as { amount: number }).amount;
 
     this.reservations.delete(reservationId);
@@ -86,7 +89,10 @@ export class DryRunClient {
   }
 
   async releaseReservation(reservationId: string) {
-    const reservedAmount = this.reservations.get(reservationId) ?? 0;
+    if (!this.reservations.has(reservationId)) {
+      return { isSuccess: false, status: 409, errorMessage: "RESERVATION_FINALIZED" };
+    }
+    const reservedAmount = this.reservations.get(reservationId)!;
     this.reservations.delete(reservationId);
     this.reserved -= reservedAmount;
     this.remaining += reservedAmount;
