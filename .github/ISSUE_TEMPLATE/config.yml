@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://runcycles.io
+    about: Check the docs — your question may already be answered.
+  - name: Security Vulnerability
+    url: https://github.com/runcycles/.github/blob/main/SECURITY.md
+    about: Report security issues privately — do NOT open a public issue.
