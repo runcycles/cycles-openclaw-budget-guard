@@ -128,7 +128,7 @@ function findMatchingBalance(
     (b) => b.remaining.unit === config.currency,
   );
 
-  if (matching.length === 0) return balances[0];
+  if (matching.length === 0) return undefined;
 
   // If budgetId is set, prefer the balance whose scope matches it
   if (config.budgetId) {

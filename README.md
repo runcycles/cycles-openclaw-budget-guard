@@ -689,7 +689,7 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 
 - If the Cycles server is **unreachable**, the plugin assumes healthy budget (fail-open)
 - If a **commit fails**, execution continues (logged but non-blocking)
-- `failClosed` only controls behavior when budget is **confirmed exhausted**
+- `failClosed` controls behavior when budget is **confirmed exhausted** or when a **model reservation is denied** by the Cycles server (e.g., estimate exceeds remaining budget)
 
 ## Troubleshooting
 
