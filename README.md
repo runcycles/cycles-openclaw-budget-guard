@@ -404,7 +404,7 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | `tenant` | string | — | Cycles tenant identifier (required) |
 | `budgetId` | string | — | Optional app-level scope for balance queries and reservations |
 | `currency` | string | `USD_MICROCENTS` | Default budget unit for all reservations |
-| `failClosed` | boolean | `true` | Block on exhausted budget (`false` = warn and continue) |
+| `failClosed` | boolean | `true` | Block model calls when budget is exhausted or reservation is denied (`false` = warn, allow, and track cost locally). See [`failClosed` behavior](#failclosed--block-vs-allow-on-budget-denial). |
 | `logLevel` | string | `info` | `debug` / `info` / `warn` / `error` |
 
 ### Budget Thresholds
@@ -567,7 +567,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|-----------|--------------|
 | **healthy** | `remaining > lowBudgetThreshold` | Pass through — no intervention |
 | **low** | `exhaustedThreshold < remaining <= lowBudgetThreshold` | Apply low-budget strategies, inject warnings |
-| **exhausted** | `remaining <= exhaustedThreshold` | Block execution (`failClosed=true`) or warn (`failClosed=false`) |
+| **exhausted** | `remaining <= exhaustedThreshold` | Block execution (`failClosed=true`) or warn + track locally (`failClosed=false`) |
 
 ### Hook: `before_model_resolve`
 
@@ -687,11 +687,31 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown when budget is exhausted and `failClosed=true`. Includes `remaining`, `tenant`, and `budgetId` properties. The error message includes an actionable hint to increase budget via the Cycles API.
 - **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type for tool denials. Includes `toolName` property.
 
-### Fail-Open Behavior
+### `failClosed` — Block vs. Allow on Budget Denial
 
-- If the Cycles server is **unreachable**, the plugin assumes healthy budget (fail-open)
+The `failClosed` setting (default: `true`) controls what happens when a model reservation is denied — either because the budget is exhausted or because the Cycles server rejects the reservation (e.g., the estimated cost exceeds remaining budget).
+
+**`failClosed: true`** — The plugin blocks the model call. It returns a synthetic model override (`__cycles_budget_exhausted__`) that causes the LLM provider to reject the request. The agent stops. Use this in production when overspend is unacceptable.
+
+**`failClosed: false`** — The plugin logs a warning and allows the model call to proceed. The estimated cost is tracked locally (session summary, cost breakdown, forecasting) even though no server-side reservation was committed. Use this for shadow/monitoring mode — you see what *would* have been blocked without disrupting the agent.
+
+| Scenario | `failClosed: true` | `failClosed: false` |
+|---|---|---|
+| Budget exhausted (cached snapshot) | Block | Warn + allow |
+| Server denies reservation (estimate > remaining) | Block | Warn + allow + track cost locally |
+| Low-budget call limit reached | Block | Warn + allow |
+| Tool reservation denied | Always block | Always block |
+
+> **Note:** Tool denials always block regardless of `failClosed` — tools have no fallback mechanism like models do.
+
+### Fail-Open Behavior (Network Errors)
+
+Separately from `failClosed`, the plugin handles **network/transient errors** with a fail-open strategy:
+
+- If the Cycles server is **unreachable**, the plugin assumes healthy budget and allows execution
 - If a **commit fails**, execution continues (logged but non-blocking)
-- `failClosed` controls behavior when budget is **confirmed exhausted** or when a **model reservation is denied** by the Cycles server (e.g., estimate exceeds remaining budget)
+
+This is always fail-open regardless of `failClosed` — a transient network blip should not kill every agent. `failClosed` only controls behavior when the server **confirms** the budget is insufficient.
 
 ## Troubleshooting
 
