@@ -9,6 +9,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "lib": ["ES2022"],
+    "types": ["node"],
     "skipLibCheck": true
   },
   "include": ["src"],
