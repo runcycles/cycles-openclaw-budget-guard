@@ -508,8 +508,10 @@ export async function beforeModelResolve(
   let resolvedModel = eventModel;
 
   if (snapshot.level === "low") {
-    // Gap 4: Chained model fallbacks
-    const fallbacks = config.modelFallbacks[eventModel];
+    // Gap 4: Chained model fallbacks (only when downgrade_model strategy is active)
+    const fallbacks = config.lowBudgetStrategies.includes("downgrade_model")
+      ? config.modelFallbacks[eventModel]
+      : undefined;
     if (fallbacks) {
       const candidates = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
       for (const candidate of candidates) {
