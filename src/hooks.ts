@@ -583,6 +583,9 @@ export async function beforeModelResolve(
     totalModelCost += modelCost;
     totalModelCalls++;
     turnIndex++;
+    if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+      remainingCallsAllowed--;
+    }
     invalidateSnapshotCache();
 
     logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
@@ -617,6 +620,9 @@ export async function beforeModelResolve(
     }
 
     turnIndex++;
+    if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+      remainingCallsAllowed--;
+    }
     invalidateSnapshotCache();
 
     logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
