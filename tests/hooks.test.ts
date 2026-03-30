@@ -432,6 +432,25 @@ describe("beforeModelResolve", () => {
     expect(result).toBeUndefined();
   });
 
+  it("decrements remainingCallsAllowed when denied + failClosed=false + limit_remaining_calls", async () => {
+    setup({
+      failClosed: false,
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 1,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 400_000 }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "BUDGET_EXCEEDED" });
+
+    // First call allowed (failClosed=false) but decrements counter from 1→0
+    const r1 = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r1).toBeUndefined();
+
+    // Second call — limit reached (remainingCallsAllowed=0), still allowed (failClosed=false) but logged
+    const r2 = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r2).toBeUndefined();
+  });
+
   it("tracks cost locally when model reservation denied + failClosed=false", async () => {
     setup({ failClosed: false, defaultModelCost: 500_000 });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 400_000 }));
