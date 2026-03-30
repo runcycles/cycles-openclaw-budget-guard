@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6 fixes two budget enforcement bugs.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6 fixes budget enforcement bugs and config validation gaps.
 
 ---
 
@@ -37,21 +37,41 @@
 
 | Fix | Description | Location |
 |---|---|---|
-| Model reservation denial ignored when failClosed=true | When the Cycles server denied a model reservation (e.g., estimate exceeds remaining budget), the plugin logged a warning but allowed the call to proceed. Budget was never reduced because no reservation ID was obtained. Now respects `failClosed`: when true, denied model reservations block the call with `modelOverride: "__cycles_budget_exhausted__"`, consistent with tool denial behavior. | `src/hooks.ts:beforeModelResolve` |
-| Wrong-currency balance used as fallback | `findMatchingBalance` returned `balances[0]` when no balance matched the configured currency, causing budget decisions to be based on a balance in the wrong currency (e.g., EUR amounts compared against USD thresholds). Now returns `undefined`, triggering the existing fail-open path. | `src/cycles.ts:findMatchingBalance` |
+| Model reservation denial ignored when failClosed=true | When the Cycles server denied a model reservation (e.g., estimate exceeds remaining budget), the plugin logged a warning but allowed the call to proceed. Now respects `failClosed`: when true, denied model reservations block the call with `modelOverride: "__cycles_budget_exhausted__"`, consistent with tool denial behavior. | `src/hooks.ts:beforeModelResolve` |
+| No cost tracking when failClosed=false and reservation denied | When `failClosed=false` allowed a denied model call to proceed, the estimated cost was never tracked. Session summaries and forecasting undercounted actual usage. Now tracks cost locally via `costBreakdown`, `totalModelCost`, and `totalModelCalls`. | `src/hooks.ts:beforeModelResolve` |
+| Wrong-currency balance used as fallback | `findMatchingBalance` returned `balances[0]` when no balance matched the configured currency, causing budget decisions based on wrong-currency amounts. Now returns `undefined`, triggering the existing fail-open path. | `src/cycles.ts:findMatchingBalance` |
+| `toolCallLimits` never enforced | OpenClaw calls the plugin entrypoint multiple times per session (once per channel/worker). Each call ran `initHooks()` which reset `toolCallCounts` to empty, so `toolCallLimits` could never trigger. Now `initHooks` only resets session state on the first call; subsequent calls preserve accumulated counters. | `src/hooks.ts:initHooks` |
+| `modelFallbacks` not gated by `lowBudgetStrategies` | Model downgrade logic ran whenever budget was "low", ignoring whether `"downgrade_model"` was in `lowBudgetStrategies`. Every other strategy was properly gated. Now consistent — removing `"downgrade_model"` from strategies disables model downgrading. | `src/hooks.ts:beforeModelResolve` |
+| `limit_remaining_calls` didn't count model calls | `remainingCallsAllowed` was only decremented by tool calls, never model calls. An agent making only model calls while budget was "low" would never hit the limit. Now both model and tool calls decrement the shared counter. | `src/hooks.ts:beforeModelResolve` |
+
+### Startup config validation
+
+Added warnings for common silent misconfigurations:
+
+| Warning | Trigger |
+|---|---|
+| `maxRemainingCallsWhenLow` has no effect | Set without `"limit_remaining_calls"` in `lowBudgetStrategies` |
+| `maxTokensWhenLow` has no effect | Set without `"reduce_max_tokens"` in `lowBudgetStrategies` |
+| `expensiveToolThreshold` has no effect | Set without `"disable_expensive_tools"` in `lowBudgetStrategies` |
+
+Added `lowBudgetStrategies` and `maxRemainingCallsWhenLow` to the startup banner.
 
 ### Documentation
 
-- README updated: `failClosed` description now reflects that it also controls behavior on denied model reservations, not just exhausted budget
+- README: Added dedicated `failClosed` behavior section with comparison table
+- README: All config examples use `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-opus-4-20250514`)
+- README: Added note explaining model names must match OpenClaw's `provider/model` format
+- README: Updated `failClosed` config table description with link to behavior section
+- docs repo: Fixed model names in `how-to/integrating-cycles-with-openclaw.md` and homepage snippet
 
 ### Test coverage
 
 | Metric | v0.7.5 | v0.7.6 |
 |---|---|---|
-| Test count | 300 | 303 |
+| Test count | 300 | 311 |
 | Test files | 10 | 10 |
-| Statement coverage | 99.47% | 99.35% |
-| Branch coverage | 97.74% | 97.47% |
+| Statement coverage | 99.47% | 99.37% |
+| Branch coverage | 97.74% | 97.54% |
 | Line coverage | 100% | 100% |
 
 ---

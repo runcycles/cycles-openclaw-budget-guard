@@ -51,6 +51,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 import {
   initHooks,
+  _resetInitialized,
   beforeModelResolve,
   beforePromptBuild,
   beforeToolCall,
@@ -61,6 +62,7 @@ import {
 // --- Setup ---
 
 function setup(configOverrides?: Parameters<typeof makeConfig>[0]) {
+  _resetInitialized();
   const config = makeConfig(configOverrides);
   const logger = makeLogger();
   initHooks(config, logger);
@@ -107,6 +109,28 @@ describe("initHooks", () => {
 
     await agentEnd({}, makeHookContext());
     expect(mockReleaseReservation).not.toHaveBeenCalled();
+  });
+
+  it("preserves toolCallCounts across repeated initHooks calls within same session", async () => {
+    setup({ toolCallLimits: { web_search: 2 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // First call — should succeed
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+
+    // Simulate OpenClaw re-initializing for a new channel (without _resetInitialized)
+    initHooks(makeConfig({ toolCallLimits: { web_search: 2 } }), makeLogger());
+
+    // Second call — should still succeed (count=1, limit=2)
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r2", affectedScopes: [] });
+    const r2 = await beforeToolCall({ toolName: "web_search", toolCallId: "c2" }, makeHookContext());
+    expect(r2).toBeUndefined();
+
+    // Third call — should be blocked (count=2, limit=2)
+    const r3 = await beforeToolCall({ toolName: "web_search", toolCallId: "c3" }, makeHookContext());
+    expect(r3).toEqual({ block: true, blockReason: expect.stringContaining("web_search") });
   });
 
   it("uses DryRunClient when dryRun is true", async () => {
@@ -1681,6 +1705,61 @@ describe("limit_remaining_calls in beforeModelResolve", () => {
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("Low budget call limit reached"),
     );
+  });
+});
+
+describe("limit_remaining_calls counts model calls", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+  });
+
+  it("model calls decrement remainingCallsAllowed when budget is low", async () => {
+    setup({
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 2,
+      failClosed: true,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    // First model call — allowed (remaining=2, after: 1)
+    const r1 = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r1).toBeUndefined();
+
+    // Second model call — allowed (remaining=1, after: 0)
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r2", affectedScopes: [] });
+    const r2 = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r2).toBeUndefined();
+
+    // Third model call — blocked (remaining=0)
+    const r3 = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r3).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
+  });
+
+  it("model and tool calls share the same remaining calls counter", async () => {
+    setup({
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      maxRemainingCallsWhenLow: 2,
+      failClosed: true,
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+
+    // One model call (remaining=2→1)
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // One tool call (remaining=1→0)
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r2", affectedScopes: [] });
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+
+    // Next model call — blocked
+    const r = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(r).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 });
 

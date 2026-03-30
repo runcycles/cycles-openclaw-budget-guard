@@ -313,6 +313,65 @@ describe("plugin entrypoint", () => {
     );
   });
 
+  it("warns when maxRemainingCallsWhenLow set without limit_remaining_calls strategy", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      toolBaseCosts: { x: 1 },
+      maxRemainingCallsWhenLow: 3,
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("maxRemainingCallsWhenLow is set to 3"),
+    );
+  });
+
+  it("warns when maxTokensWhenLow set without reduce_max_tokens strategy", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      toolBaseCosts: { x: 1 },
+      maxTokensWhenLow: 512,
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("maxTokensWhenLow is set to 512"),
+    );
+  });
+
+  it("warns when expensiveToolThreshold set without disable_expensive_tools strategy", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      toolBaseCosts: { x: 1 },
+      expensiveToolThreshold: 50000,
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("expensiveToolThreshold is set to 50000"),
+    );
+  });
+
+  it("shows maxRemainingCallsWhenLow in banner when limit_remaining_calls is active", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["limit_remaining_calls"],
+      toolBaseCosts: { x: 1 },
+      maxRemainingCallsWhenLow: 5,
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(infoCall).toContain("maxRemainingCallsWhenLow: 5");
+  });
+
   it("includes toolCallLimits in startup summary", () => {
     mockResolveConfig.mockReturnValue(makeConfig({
       lowBudgetStrategies: [],

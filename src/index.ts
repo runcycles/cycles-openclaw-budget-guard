@@ -106,6 +106,9 @@ export default function (api: OpenClawPluginApi): void {
     if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
     if (config.toolCallLimits && Object.keys(config.toolCallLimits).length > 0)
       lines.push(`  toolCallLimits: ${Object.entries(config.toolCallLimits).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    lines.push(`  lowBudgetStrategies: ${config.lowBudgetStrategies.join(", ")}`);
+    if (config.lowBudgetStrategies.includes("limit_remaining_calls"))
+      lines.push(`  maxRemainingCallsWhenLow: ${config.maxRemainingCallsWhenLow}`);
     api.logger.info(lines.join("\n"));
 
     // Warn about common misconfigurations so operators catch issues early.
@@ -124,6 +127,30 @@ export default function (api: OpenClawPluginApi): void {
     ) {
       api.logger.warn(
         "[openclaw-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
+      );
+    }
+    if (
+      !config.lowBudgetStrategies.includes("limit_remaining_calls") &&
+      config.maxRemainingCallsWhenLow !== 10 // 10 is the default — only warn if user explicitly set it
+    ) {
+      api.logger.warn(
+        `[openclaw-budget-guard] maxRemainingCallsWhenLow is set to ${config.maxRemainingCallsWhenLow} but 'limit_remaining_calls' is not in lowBudgetStrategies — this setting will have no effect. Add "limit_remaining_calls" to lowBudgetStrategies to enable it.`,
+      );
+    }
+    if (
+      !config.lowBudgetStrategies.includes("reduce_max_tokens") &&
+      config.maxTokensWhenLow !== 1024 // 1024 is the default
+    ) {
+      api.logger.warn(
+        `[openclaw-budget-guard] maxTokensWhenLow is set to ${config.maxTokensWhenLow} but 'reduce_max_tokens' is not in lowBudgetStrategies — this setting will have no effect. Add "reduce_max_tokens" to lowBudgetStrategies to enable it.`,
+      );
+    }
+    if (
+      !config.lowBudgetStrategies.includes("disable_expensive_tools") &&
+      config.expensiveToolThreshold !== undefined
+    ) {
+      api.logger.warn(
+        `[openclaw-budget-guard] expensiveToolThreshold is set to ${config.expensiveToolThreshold} but 'disable_expensive_tools' is not in lowBudgetStrategies — this setting will have no effect. Add "disable_expensive_tools" to lowBudgetStrategies to enable it.`,
       );
     }
     if (Object.keys(config.toolBaseCosts).length === 0) {
