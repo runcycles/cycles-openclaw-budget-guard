@@ -51,6 +51,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 import {
   initHooks,
+  _resetInitialized,
   beforeModelResolve,
   beforePromptBuild,
   beforeToolCall,
@@ -61,6 +62,7 @@ import {
 // --- Setup ---
 
 function setup(configOverrides?: Parameters<typeof makeConfig>[0]) {
+  _resetInitialized();
   const config = makeConfig(configOverrides);
   const logger = makeLogger();
   initHooks(config, logger);
@@ -107,6 +109,28 @@ describe("initHooks", () => {
 
     await agentEnd({}, makeHookContext());
     expect(mockReleaseReservation).not.toHaveBeenCalled();
+  });
+
+  it("preserves toolCallCounts across repeated initHooks calls within same session", async () => {
+    setup({ toolCallLimits: { web_search: 2 } });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    // First call — should succeed
+    await beforeToolCall({ toolName: "web_search", toolCallId: "c1" }, makeHookContext());
+
+    // Simulate OpenClaw re-initializing for a new channel (without _resetInitialized)
+    initHooks(makeConfig({ toolCallLimits: { web_search: 2 } }), makeLogger());
+
+    // Second call — should still succeed (count=1, limit=2)
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r2", affectedScopes: [] });
+    const r2 = await beforeToolCall({ toolName: "web_search", toolCallId: "c2" }, makeHookContext());
+    expect(r2).toBeUndefined();
+
+    // Third call — should be blocked (count=2, limit=2)
+    const r3 = await beforeToolCall({ toolName: "web_search", toolCallId: "c3" }, makeHookContext());
+    expect(r3).toEqual({ block: true, blockReason: expect.stringContaining("web_search") });
   });
 
   it("uses DryRunClient when dryRun is true", async () => {

@@ -120,6 +120,14 @@ let exhaustionWarningFired = false;
 // Initialization
 // ---------------------------------------------------------------------------
 
+/** Tracks whether initHooks has been called at least once this session. */
+let initialized = false;
+
+/** @internal Reset initialization flag (for testing only). */
+export function _resetInitialized(): void {
+  initialized = false;
+}
+
 export function initHooks(
   pluginConfig: BudgetGuardConfig,
   apiLogger?: OpenClawLogger,
@@ -134,6 +142,21 @@ export function initHooks(
   } else {
     client = createCyclesClient(config);
   }
+
+  // v0.5.0: Set up metrics emitter
+  metricsEmitter = config.metricsEmitter;
+  baseTags = { tenant: config.tenant };
+  if (config.budgetId) baseTags.budgetId = config.budgetId;
+
+  // OpenClaw calls the plugin entrypoint (and thus initHooks) multiple times —
+  // once per channel/worker. Only reset session state on the first init.
+  // Subsequent inits update config/client/logger but preserve accumulated
+  // counters (toolCallCounts, costBreakdown, etc.) so toolCallLimits and
+  // session tracking work correctly across the session.
+  if (initialized) {
+    return;
+  }
+  initialized = true;
 
   cachedSnapshot = undefined;
   cachedSnapshotAt = 0;
@@ -156,11 +179,6 @@ export function initHooks(
   pendingModelReservation = undefined;
   pendingModelName = undefined;
   turnIndex = 0;
-
-  // v0.5.0: Set up metrics emitter
-  metricsEmitter = config.metricsEmitter;
-  baseTags = { tenant: config.tenant };
-  if (config.budgetId) baseTags.budgetId = config.budgetId;
 
   // v0.6.0: Reset new state
   for (const timer of heartbeatTimers.values()) clearInterval(timer);
