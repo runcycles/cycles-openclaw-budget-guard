@@ -516,11 +516,13 @@ In this example, `web_search` (500K) and `code_execution` (1M) would be blocked 
 
 > **Important:** Each strategy's config parameters (e.g., `maxTokensWhenLow`, `expensiveToolThreshold`, `maxRemainingCallsWhenLow`) are silently ignored unless the corresponding strategy is listed in `lowBudgetStrategies`. The plugin warns at startup if it detects this misconfiguration.
 
-Strategies can be combined. They are applied in this order:
-1. `downgrade_model` — swap to a cheaper model (model calls only)
-2. `limit_remaining_calls` — block if call count exhausted
-3. `disable_expensive_tools` — block expensive tools (tool calls only)
-4. `reduce_max_tokens` — append token hint to prompt
+Strategies can be combined. They run in different hooks:
+
+- **Model calls** (`before_model_resolve`): `downgrade_model` → `limit_remaining_calls`
+- **Tool calls** (`before_tool_call`): `disable_expensive_tools` → `limit_remaining_calls`
+- **Prompt build** (`before_prompt_build`): `reduce_max_tokens`
+
+Within each hook, an earlier strategy that blocks prevents later strategies from running.
 
 A typical production config uses all four:
 
