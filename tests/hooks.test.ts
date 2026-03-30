@@ -305,6 +305,23 @@ describe("beforeModelResolve", () => {
     expect(result).toEqual({ modelOverride: "gpt-4o-mini" });
   });
 
+  it("strips provider prefix from modelOverride to avoid double-prefixing", async () => {
+    setup({
+      modelFallbacks: { "openai/gpt-5-mini": "openai/gpt-5-nano" },
+      modelBaseCosts: { "openai/gpt-5-nano": 500 },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    const result = await beforeModelResolve(
+      { model: "openai/gpt-5-mini" },
+      makeHookContext(),
+    );
+    // OpenClaw prepends the provider, so plugin strips "openai/" to avoid "openai/openai/gpt-5-nano"
+    expect(result).toEqual({ modelOverride: "gpt-5-nano" });
+  });
+
   it("supports chained fallbacks (Gap 4)", async () => {
     setup({
       modelFallbacks: { "opus": ["sonnet", "haiku"] },
