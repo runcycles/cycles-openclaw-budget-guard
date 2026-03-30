@@ -39,7 +39,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "runcycles": "^0.1.1"
+    "runcycles": "^0.2.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
