@@ -699,10 +699,12 @@ The `failClosed` setting (default: `true`) controls what happens when a model re
 |---|---|---|
 | Budget exhausted (cached snapshot) | Block | Warn + allow |
 | Server denies reservation (estimate > remaining) | Block | Warn + allow + track cost locally |
-| Low-budget call limit reached | Block | Warn + allow |
+| Low-budget call limit reached (model) | Block | Warn + allow |
+| Low-budget call limit reached (tool) | Always block | Always block |
+| Expensive tool threshold exceeded | Always block | Always block |
 | Tool reservation denied | Always block | Always block |
 
-> **Note:** Tool denials always block regardless of `failClosed` — tools have no fallback mechanism like models do.
+> **Note:** All tool-level enforcement (reservation denials, call limits, expensive tool threshold) always blocks regardless of `failClosed` — tools have no fallback mechanism. `failClosed` only affects model-level decisions.
 
 ### Fail-Open Behavior (Network Errors)
 

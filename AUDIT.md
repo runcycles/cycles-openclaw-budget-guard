@@ -42,6 +42,7 @@
 | Wrong-currency balance used as fallback | `findMatchingBalance` returned `balances[0]` when no balance matched the configured currency, causing budget decisions based on wrong-currency amounts. Now returns `undefined`, triggering the existing fail-open path. | `src/cycles.ts:findMatchingBalance` |
 | `toolCallLimits` never enforced | OpenClaw calls the plugin entrypoint multiple times per session (once per channel/worker). Each call ran `initHooks()` which reset `toolCallCounts` to empty, so `toolCallLimits` could never trigger. Now `initHooks` only resets session state on the first call; subsequent calls preserve accumulated counters. | `src/hooks.ts:initHooks` |
 | `modelFallbacks` not gated by `lowBudgetStrategies` | Model downgrade logic ran whenever budget was "low", ignoring whether `"downgrade_model"` was in `lowBudgetStrategies`. Every other strategy was properly gated. Now consistent — removing `"downgrade_model"` from strategies disables model downgrading. | `src/hooks.ts:beforeModelResolve` |
+| `limit_remaining_calls` didn't count model calls | `remainingCallsAllowed` was only decremented by tool calls, never model calls. An agent making only model calls while budget was "low" would never hit the limit. Now both model and tool calls decrement the shared counter. | `src/hooks.ts:beforeModelResolve` |
 
 ### Startup config validation
 
@@ -67,7 +68,7 @@ Added `lowBudgetStrategies` and `maxRemainingCallsWhenLow` to the startup banner
 
 | Metric | v0.7.5 | v0.7.6 |
 |---|---|---|
-| Test count | 300 | 309 |
+| Test count | 300 | 311 |
 | Test files | 10 | 10 |
 | Statement coverage | 99.47% | 99.37% |
 | Branch coverage | 97.74% | 97.54% |
