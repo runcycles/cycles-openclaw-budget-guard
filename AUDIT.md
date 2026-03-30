@@ -68,10 +68,10 @@ Added `lowBudgetStrategies` and `maxRemainingCallsWhenLow` to the startup banner
 
 | Metric | v0.7.5 | v0.7.6 |
 |---|---|---|
-| Test count | 300 | 311 |
+| Test count | 300 | 312 |
 | Test files | 10 | 10 |
 | Statement coverage | 99.47% | 99.37% |
-| Branch coverage | 97.74% | 97.54% |
+| Branch coverage | 97.74% | 97.57% |
 | Line coverage | 100% | 100% |
 
 ---
