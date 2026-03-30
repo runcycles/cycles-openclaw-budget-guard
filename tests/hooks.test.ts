@@ -408,6 +408,25 @@ describe("beforeModelResolve", () => {
     expect(result).toBeUndefined();
   });
 
+  it("tracks cost locally when model reservation denied + failClosed=false", async () => {
+    setup({ failClosed: false, defaultModelCost: 500_000 });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 400_000 }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "BUDGET_EXCEEDED" });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Verify cost was tracked by checking session summary via agentEnd
+    mockIsAllowed.mockReturnValue(true);
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ remaining: 0, spent: 500_000 }));
+    const ctx = makeHookContext();
+    await agentEnd({}, ctx);
+
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
+    const breakdown = summary.costBreakdown as Record<string, { count: number; totalCost: number }>;
+    expect(breakdown["model:gpt-4o"]).toEqual({ count: 1, totalCost: 500_000 });
+  });
+
   it("uses modelCurrency when set (Gap 14)", async () => {
     setup({ modelCurrency: "TOKENS" });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));

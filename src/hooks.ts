@@ -555,6 +555,19 @@ export async function beforeModelResolve(
       return { modelOverride: "__cycles_budget_exhausted__" };
     }
     logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue (failClosed=false)`);
+
+    // Track cost locally even though no server-side reservation was created.
+    // The model call will proceed, so the session summary and forecasting
+    // should reflect the estimated cost.
+    trackCost(`model:${resolvedModel}`, modelCost);
+    totalModelCost += modelCost;
+    totalModelCalls++;
+    turnIndex++;
+    invalidateSnapshotCache();
+
+    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    checkBurnRate(snapshot.remaining);
+    checkExhaustionForecast(snapshot.remaining);
   } else {
     totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
