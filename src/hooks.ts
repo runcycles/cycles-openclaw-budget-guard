@@ -550,9 +550,11 @@ export async function beforeModelResolve(
     emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
     logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
 
-    // Reservation denied but budget level was already checked above (exhausted returns modelOverride block).
-    // If we reach here, budget is healthy/low but the reservation failed for another reason.
-    logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue`);
+    if (config.failClosed) {
+      logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — blocking model call (failClosed=true)`);
+      return { modelOverride: "__cycles_budget_exhausted__" };
+    }
+    logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue (failClosed=false)`);
   } else {
     totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });

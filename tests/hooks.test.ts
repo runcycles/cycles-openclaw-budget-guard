@@ -365,18 +365,27 @@ describe("beforeModelResolve", () => {
     expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 
-  it("allows when model reservation denied + failClosed but budget is healthy", async () => {
+  it("blocks when model reservation denied + failClosed, even if budget snapshot is healthy", async () => {
     setup({ failClosed: true });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy", remaining: 50_000_000 }));
     mockIsAllowed.mockReturnValue(false);
     mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "reservation_failed" });
 
     const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
-    // Should NOT throw — budget is healthy, deny is for another reason
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
   });
 
-  it("allows when model reservation denied + !failClosed", async () => {
+  it("blocks when model reservation denied + failClosed + budget is low (stale snapshot)", async () => {
+    setup({ failClosed: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 400_000 }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "BUDGET_EXCEEDED" });
+
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
+  });
+
+  it("allows when model reservation denied + failClosed=false", async () => {
     setup({ failClosed: false });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(false);
@@ -386,6 +395,16 @@ describe("beforeModelResolve", () => {
       { model: "gpt-4o" },
       makeHookContext(),
     );
+    expect(result).toBeUndefined();
+  });
+
+  it("allows when model reservation denied + failClosed=false + budget is low", async () => {
+    setup({ failClosed: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 400_000 }));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "BUDGET_EXCEEDED" });
+
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
     expect(result).toBeUndefined();
   });
 
