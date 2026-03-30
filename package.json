@@ -42,7 +42,7 @@
     "runcycles": "^0.1.1"
   },
   "devDependencies": {
-    "@types/node": "^22.19.15",
+    "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^4.1.0",
     "tsup": "^8.0.0",
     "typescript": "^5.9.3",
