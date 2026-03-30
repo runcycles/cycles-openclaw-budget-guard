@@ -184,7 +184,7 @@ After restarting OpenClaw, check the logs for:
 Run your agent and look for budget activity:
 
 ```
-[openclaw-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
+[openclaw-budget-guard] before_model_resolve: model=anthropic/claude-sonnet-4-20250514 level=healthy
 ```
 
 If you see this, the plugin is actively checking budget on every model and tool call.
@@ -203,10 +203,12 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
 | 100,000,000 | $1.00 |
 
 **Example.** With a $5 budget (500,000,000 units):
-- `claude-opus` at 1,500,000/call = ~333 calls before exhaustion
-- `claude-sonnet` at 300,000/call = ~1,666 calls
+- `anthropic/claude-opus` at 1,500,000/call = ~333 calls before exhaustion
+- `anthropic/claude-sonnet` at 300,000/call = ~1,666 calls
 - `web_search` at 500,000/call = ~1,000 calls
 - `lowBudgetThreshold: 10000000` triggers model downgrade when $0.10 remains
+
+**Model names.** OpenClaw passes model identifiers in `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`). Your `modelBaseCosts`, `modelFallbacks`, and `defaultModelName` must use the same format — bare model names like `gpt-4o` won't match.
 
 **Setting toolBaseCosts.** Start with the default (100,000 units per call). After your first session, check the `unconfiguredTools` list in the session summary — it tells you which tools need explicit costs. For tools that call external APIs, estimate higher (500K-1M). For lightweight tools, estimate lower (10K-50K).
 
@@ -227,14 +229,14 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
           "lowBudgetThreshold": 10000000,
           "exhaustedThreshold": 0,
           "modelFallbacks": {
-            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
-            "gpt-4o": "gpt-4o-mini"
+            "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"],
+            "openai/gpt-4o": "openai/gpt-4o-mini"
           },
           "modelBaseCosts": {
-            "claude-opus-4-20250514": 1500000,
-            "claude-sonnet-4-20250514": 300000,
-            "gpt-4o": 1000000,
-            "gpt-4o-mini": 100000
+            "anthropic/claude-opus-4-20250514": 1500000,
+            "anthropic/claude-sonnet-4-20250514": 300000,
+            "openai/gpt-4o": 1000000,
+            "openai/gpt-4o-mini": 100000
           },
           "toolBaseCosts": {
             "web_search": 500000,
@@ -279,12 +281,12 @@ For production agents handling real spend. Blocks on exhaustion, downgrades mode
           "failClosed": true,
           "lowBudgetStrategies": ["downgrade_model", "disable_expensive_tools", "limit_remaining_calls"],
           "modelFallbacks": {
-            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+            "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"]
           },
           "modelBaseCosts": {
-            "claude-opus-4-20250514": 1500000,
-            "claude-sonnet-4-20250514": 300000,
-            "claude-haiku-4-5-20251001": 100000
+            "anthropic/claude-opus-4-20250514": 1500000,
+            "anthropic/claude-sonnet-4-20250514": 300000,
+            "anthropic/claude-haiku-4-5-20251001": 100000
           },
           "toolBaseCosts": {
             "web_search": 500000,
@@ -342,8 +344,8 @@ Aggressive cost savings. Low thresholds, model downgrade with token limits, expe
           "maxTokensWhenLow": 512,
           "expensiveToolThreshold": 200000,
           "modelFallbacks": {
-            "claude-opus-4-20250514": "claude-haiku-4-5-20251001",
-            "gpt-4o": "gpt-4o-mini"
+            "anthropic/claude-opus-4-20250514": "anthropic/claude-haiku-4-5-20251001",
+            "openai/gpt-4o": "openai/gpt-4o-mini"
           }
         }
       }
@@ -365,8 +367,8 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 **I want cost-aware model selection** — add:
 ```json
 {
-  "modelFallbacks": { "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] },
-  "modelBaseCosts": { "claude-opus-4-20250514": 1500000, "claude-sonnet-4-20250514": 300000, "claude-haiku-4-5-20251001": 100000 }
+  "modelFallbacks": { "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"] },
+  "modelBaseCosts": { "anthropic/claude-opus-4-20250514": 1500000, "anthropic/claude-sonnet-4-20250514": 300000, "anthropic/claude-haiku-4-5-20251001": 100000 }
 }
 ```
 
@@ -617,8 +619,8 @@ Model fallbacks support both single values and ordered chains:
 ```json
 {
   "modelFallbacks": {
-    "opus": ["sonnet", "haiku"],
-    "gpt-4o": "gpt-4o-mini"
+    "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"],
+    "openai/gpt-4o": "openai/gpt-4o-mini"
   }
 }
 ```
