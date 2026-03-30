@@ -456,6 +456,8 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 
 ### Low Budget Strategies
 
+When budget drops below `lowBudgetThreshold`, the plugin applies degradation strategies to reduce spend. Strategies only activate when explicitly listed in `lowBudgetStrategies`. The default is `["downgrade_model"]`.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `lowBudgetStrategies` | string[] | `["downgrade_model"]` | Strategies to apply when budget is low. Each strategy below only takes effect when listed here. |
@@ -463,11 +465,73 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | `expensiveToolThreshold` | number | — | Cost threshold (requires `"disable_expensive_tools"` in `lowBudgetStrategies`) |
 | `maxRemainingCallsWhenLow` | number | `10` | Max calls allowed (requires `"limit_remaining_calls"` in `lowBudgetStrategies`) |
 
-Available strategies:
-- **`downgrade_model`** — Use cheaper fallback models from `modelFallbacks`
-- **`reduce_max_tokens`** — Append token limit guidance to prompt hints
-- **`disable_expensive_tools`** — Block tools exceeding `expensiveToolThreshold`
-- **`limit_remaining_calls`** — Cap total tool/model calls while budget is low
+**`downgrade_model`** — Switch to cheaper models when budget is low. Requires `modelFallbacks` to define the fallback chain. The plugin tries each candidate in order and picks the first one whose cost (from `modelBaseCosts`) fits within the remaining budget. If no candidate fits, the original model is used.
+
+```json
+{
+  "lowBudgetStrategies": ["downgrade_model"],
+  "modelFallbacks": {
+    "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"]
+  },
+  "modelBaseCosts": {
+    "anthropic/claude-opus-4-20250514": 1500000,
+    "anthropic/claude-sonnet-4-20250514": 300000,
+    "anthropic/claude-haiku-4-5-20251001": 100000
+  }
+}
+```
+
+**`reduce_max_tokens`** — Append a token limit instruction to the system prompt hint (e.g., "Limit responses to 512 tokens"). This is advisory — the LLM may not obey it. Does not enforce a hard token cap at the API level.
+
+```json
+{
+  "lowBudgetStrategies": ["downgrade_model", "reduce_max_tokens"],
+  "maxTokensWhenLow": 512
+}
+```
+
+**`disable_expensive_tools`** — Block tools whose estimated cost exceeds a threshold. The threshold defaults to `lowBudgetThreshold / 10` if not set explicitly. Tools are always hard-blocked (regardless of `failClosed`).
+
+```json
+{
+  "lowBudgetStrategies": ["downgrade_model", "disable_expensive_tools"],
+  "expensiveToolThreshold": 200000,
+  "toolBaseCosts": {
+    "web_search": 500000,
+    "code_execution": 1000000,
+    "read_file": 50000
+  }
+}
+```
+In this example, `web_search` (500K) and `code_execution` (1M) would be blocked when budget is low, but `read_file` (50K) would still be allowed.
+
+**`limit_remaining_calls`** — Cap the total number of model + tool calls allowed while budget is low. Both model and tool calls decrement a shared counter. When the counter reaches zero, models respect `failClosed` (block or warn) while tools are always blocked.
+
+```json
+{
+  "lowBudgetStrategies": ["downgrade_model", "limit_remaining_calls"],
+  "maxRemainingCallsWhenLow": 5
+}
+```
+
+> **Important:** Each strategy's config parameters (e.g., `maxTokensWhenLow`, `expensiveToolThreshold`, `maxRemainingCallsWhenLow`) are silently ignored unless the corresponding strategy is listed in `lowBudgetStrategies`. The plugin warns at startup if it detects this misconfiguration.
+
+Strategies can be combined. They are applied in this order:
+1. `downgrade_model` — swap to a cheaper model (model calls only)
+2. `limit_remaining_calls` — block if call count exhausted
+3. `disable_expensive_tools` — block expensive tools (tool calls only)
+4. `reduce_max_tokens` — append token hint to prompt
+
+A typical production config uses all four:
+
+```json
+{
+  "lowBudgetStrategies": ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls"],
+  "maxTokensWhenLow": 512,
+  "expensiveToolThreshold": 200000,
+  "maxRemainingCallsWhenLow": 5
+}
+```
 
 ### Retry on Deny
 
