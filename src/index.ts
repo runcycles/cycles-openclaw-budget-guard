@@ -106,6 +106,9 @@ export default function (api: OpenClawPluginApi): void {
     if (config.toolBlocklist) lines.push(`  toolBlocklist: ${config.toolBlocklist.join(", ")}`);
     if (config.toolCallLimits && Object.keys(config.toolCallLimits).length > 0)
       lines.push(`  toolCallLimits: ${Object.entries(config.toolCallLimits).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    lines.push(`  lowBudgetStrategies: ${config.lowBudgetStrategies.join(", ")}`);
+    if (config.lowBudgetStrategies.includes("limit_remaining_calls"))
+      lines.push(`  maxRemainingCallsWhenLow: ${config.maxRemainingCallsWhenLow}`);
     api.logger.info(lines.join("\n"));
 
     // Warn about common misconfigurations so operators catch issues early.
