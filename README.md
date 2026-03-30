@@ -458,10 +458,10 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `lowBudgetStrategies` | string[] | `["downgrade_model"]` | Strategies to apply when budget is low |
-| `maxTokensWhenLow` | number | `1024` | Token limit hint when `reduce_max_tokens` strategy is active |
-| `expensiveToolThreshold` | number | — | Cost threshold for `disable_expensive_tools` strategy |
-| `maxRemainingCallsWhenLow` | number | `10` | Max calls when `limit_remaining_calls` strategy is active |
+| `lowBudgetStrategies` | string[] | `["downgrade_model"]` | Strategies to apply when budget is low. Each strategy below only takes effect when listed here. |
+| `maxTokensWhenLow` | number | `1024` | Token limit hint (requires `"reduce_max_tokens"` in `lowBudgetStrategies`) |
+| `expensiveToolThreshold` | number | — | Cost threshold (requires `"disable_expensive_tools"` in `lowBudgetStrategies`) |
+| `maxRemainingCallsWhenLow` | number | `10` | Max calls allowed (requires `"limit_remaining_calls"` in `lowBudgetStrategies`) |
 
 Available strategies:
 - **`downgrade_model`** — Use cheaper fallback models from `modelFallbacks`
