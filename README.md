@@ -208,7 +208,7 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
 - `web_search` at 500,000/call = ~1,000 calls
 - `lowBudgetThreshold: 10000000` triggers model downgrade when $0.10 remains
 
-**Model names.** OpenClaw passes model identifiers in `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`). Your `modelBaseCosts`, `modelFallbacks`, and `defaultModelName` must use the same format — bare model names like `gpt-4o` won't match.
+**Model names.** OpenClaw passes model identifiers in `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`). Your `modelBaseCosts`, `modelFallbacks`, and `defaultModelName` must use the same format — bare model names like `gpt-4o` won't match. The plugin automatically strips the provider prefix when returning `modelOverride` to OpenClaw, so you can use `provider/model` consistently in all config fields without double-prefixing issues.
 
 **Setting toolBaseCosts.** Start with the default (100,000 units per call). After your first session, check the `unconfiguredTools` list in the session summary — it tells you which tools need explicit costs. For tools that call external APIs, estimate higher (500K-1M). For lightweight tools, estimate lower (10K-50K).
 

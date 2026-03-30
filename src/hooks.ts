@@ -631,7 +631,13 @@ export async function beforeModelResolve(
   }
 
   if (resolvedModel !== eventModel) {
-    return { modelOverride: resolvedModel };
+    // OpenClaw prepends the provider prefix to modelOverride values,
+    // so strip any provider/ prefix to avoid double-prefixing
+    // (e.g., "openai/gpt-5-nano" → "gpt-5-nano" → OpenClaw adds "openai/" → "openai/gpt-5-nano")
+    const overrideValue = resolvedModel.includes("/")
+      ? resolvedModel.split("/").slice(1).join("/")
+      : resolvedModel;
+    return { modelOverride: overrideValue };
   }
   return undefined;
 }
