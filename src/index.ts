@@ -129,6 +129,14 @@ export default function (api: OpenClawPluginApi): void {
         "[openclaw-budget-guard] Strategy 'disable_expensive_tools' is enabled but no toolBaseCosts or expensiveToolThreshold configured — all tools use the default cost estimate",
       );
     }
+    if (
+      !config.lowBudgetStrategies.includes("limit_remaining_calls") &&
+      config.maxRemainingCallsWhenLow !== 10 // 10 is the default — only warn if user explicitly set it
+    ) {
+      api.logger.warn(
+        `[openclaw-budget-guard] maxRemainingCallsWhenLow is set to ${config.maxRemainingCallsWhenLow} but 'limit_remaining_calls' is not in lowBudgetStrategies — this setting will have no effect. Add "limit_remaining_calls" to lowBudgetStrategies to enable it.`,
+      );
+    }
     if (Object.keys(config.toolBaseCosts).length === 0) {
       api.logger.info(
         "[openclaw-budget-guard] No toolBaseCosts configured — all tools will use the default cost estimate (100,000 units). Set toolBaseCosts for accurate budgeting.",
