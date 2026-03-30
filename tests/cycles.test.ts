@@ -149,6 +149,30 @@ describe("fetchBudgetState", () => {
     expect(snapshot.level).toBe("healthy");
   });
 
+  it("returns fail-open snapshot when balances exist but none match configured currency", async () => {
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test",
+            scopePath: "/test",
+            remaining: { unit: "EUR_MICROCENTS", amount: 500 },
+            reserved: { unit: "EUR_MICROCENTS", amount: 0 },
+            spent: { unit: "EUR_MICROCENTS", amount: 100 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    // Should NOT use the EUR balance for USD_MICROCENTS comparisons
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
+  });
+
   it("passes budgetId as app param when set", async () => {
     const cfgWithBudget = makeConfig({ budgetId: "my-app" });
     mockGetBalances.mockResolvedValue({
@@ -242,7 +266,7 @@ describe("fetchBudgetState", () => {
     expect(snapshot.remaining).toBe(42);
   });
 
-  it("falls back to first balance when no currency match", async () => {
+  it("returns fail-open when no balance matches configured currency", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
       body: {
@@ -263,7 +287,9 @@ describe("fetchBudgetState", () => {
 
     const client = createCyclesClient(config);
     const snapshot = await fetchBudgetState(client, config, logger);
-    expect(snapshot.remaining).toBe(777);
+    // Should NOT use a wrong-currency balance for budget decisions
+    expect(snapshot.remaining).toBe(Infinity);
+    expect(snapshot.level).toBe("healthy");
   });
 
   it("prefers balance with budgetId in scope", async () => {

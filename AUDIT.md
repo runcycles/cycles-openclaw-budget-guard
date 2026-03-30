@@ -27,7 +27,32 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6 fixes two budget enforcement bugs.
+
+---
+
+## v0.7.6 Changes (2026-03-30)
+
+### Bug fixes
+
+| Fix | Description | Location |
+|---|---|---|
+| Model reservation denial ignored when failClosed=true | When the Cycles server denied a model reservation (e.g., estimate exceeds remaining budget), the plugin logged a warning but allowed the call to proceed. Budget was never reduced because no reservation ID was obtained. Now respects `failClosed`: when true, denied model reservations block the call with `modelOverride: "__cycles_budget_exhausted__"`, consistent with tool denial behavior. | `src/hooks.ts:beforeModelResolve` |
+| Wrong-currency balance used as fallback | `findMatchingBalance` returned `balances[0]` when no balance matched the configured currency, causing budget decisions to be based on a balance in the wrong currency (e.g., EUR amounts compared against USD thresholds). Now returns `undefined`, triggering the existing fail-open path. | `src/cycles.ts:findMatchingBalance` |
+
+### Documentation
+
+- README updated: `failClosed` description now reflects that it also controls behavior on denied model reservations, not just exhausted budget
+
+### Test coverage
+
+| Metric | v0.7.5 | v0.7.6 |
+|---|---|---|
+| Test count | 300 | 303 |
+| Test files | 10 | 10 |
+| Statement coverage | 99.47% | 99.35% |
+| Branch coverage | 97.74% | 97.47% |
+| Line coverage | 100% | 100% |
 
 ---
 

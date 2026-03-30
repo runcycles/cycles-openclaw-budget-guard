@@ -184,7 +184,7 @@ After restarting OpenClaw, check the logs for:
 Run your agent and look for budget activity:
 
 ```
-[openclaw-budget-guard] before_model_resolve: model=claude-sonnet-4-20250514 level=healthy
+[openclaw-budget-guard] before_model_resolve: model=anthropic/claude-sonnet-4-20250514 level=healthy
 ```
 
 If you see this, the plugin is actively checking budget on every model and tool call.
@@ -203,10 +203,12 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
 | 100,000,000 | $1.00 |
 
 **Example.** With a $5 budget (500,000,000 units):
-- `claude-opus` at 1,500,000/call = ~333 calls before exhaustion
-- `claude-sonnet` at 300,000/call = ~1,666 calls
+- `anthropic/claude-opus` at 1,500,000/call = ~333 calls before exhaustion
+- `anthropic/claude-sonnet` at 300,000/call = ~1,666 calls
 - `web_search` at 500,000/call = ~1,000 calls
 - `lowBudgetThreshold: 10000000` triggers model downgrade when $0.10 remains
+
+**Model names.** OpenClaw passes model identifiers in `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`). Your `modelBaseCosts`, `modelFallbacks`, and `defaultModelName` must use the same format — bare model names like `gpt-4o` won't match.
 
 **Setting toolBaseCosts.** Start with the default (100,000 units per call). After your first session, check the `unconfiguredTools` list in the session summary — it tells you which tools need explicit costs. For tools that call external APIs, estimate higher (500K-1M). For lightweight tools, estimate lower (10K-50K).
 
@@ -227,14 +229,14 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
           "lowBudgetThreshold": 10000000,
           "exhaustedThreshold": 0,
           "modelFallbacks": {
-            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
-            "gpt-4o": "gpt-4o-mini"
+            "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"],
+            "openai/gpt-4o": "openai/gpt-4o-mini"
           },
           "modelBaseCosts": {
-            "claude-opus-4-20250514": 1500000,
-            "claude-sonnet-4-20250514": 300000,
-            "gpt-4o": 1000000,
-            "gpt-4o-mini": 100000
+            "anthropic/claude-opus-4-20250514": 1500000,
+            "anthropic/claude-sonnet-4-20250514": 300000,
+            "openai/gpt-4o": 1000000,
+            "openai/gpt-4o-mini": 100000
           },
           "toolBaseCosts": {
             "web_search": 500000,
@@ -279,12 +281,12 @@ For production agents handling real spend. Blocks on exhaustion, downgrades mode
           "failClosed": true,
           "lowBudgetStrategies": ["downgrade_model", "disable_expensive_tools", "limit_remaining_calls"],
           "modelFallbacks": {
-            "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+            "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"]
           },
           "modelBaseCosts": {
-            "claude-opus-4-20250514": 1500000,
-            "claude-sonnet-4-20250514": 300000,
-            "claude-haiku-4-5-20251001": 100000
+            "anthropic/claude-opus-4-20250514": 1500000,
+            "anthropic/claude-sonnet-4-20250514": 300000,
+            "anthropic/claude-haiku-4-5-20251001": 100000
           },
           "toolBaseCosts": {
             "web_search": 500000,
@@ -342,8 +344,8 @@ Aggressive cost savings. Low thresholds, model downgrade with token limits, expe
           "maxTokensWhenLow": 512,
           "expensiveToolThreshold": 200000,
           "modelFallbacks": {
-            "claude-opus-4-20250514": "claude-haiku-4-5-20251001",
-            "gpt-4o": "gpt-4o-mini"
+            "anthropic/claude-opus-4-20250514": "anthropic/claude-haiku-4-5-20251001",
+            "openai/gpt-4o": "openai/gpt-4o-mini"
           }
         }
       }
@@ -365,8 +367,8 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 **I want cost-aware model selection** — add:
 ```json
 {
-  "modelFallbacks": { "claude-opus-4-20250514": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] },
-  "modelBaseCosts": { "claude-opus-4-20250514": 1500000, "claude-sonnet-4-20250514": 300000, "claude-haiku-4-5-20251001": 100000 }
+  "modelFallbacks": { "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"] },
+  "modelBaseCosts": { "anthropic/claude-opus-4-20250514": 1500000, "anthropic/claude-sonnet-4-20250514": 300000, "anthropic/claude-haiku-4-5-20251001": 100000 }
 }
 ```
 
@@ -402,7 +404,7 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | `tenant` | string | — | Cycles tenant identifier (required) |
 | `budgetId` | string | — | Optional app-level scope for balance queries and reservations |
 | `currency` | string | `USD_MICROCENTS` | Default budget unit for all reservations |
-| `failClosed` | boolean | `true` | Block on exhausted budget (`false` = warn and continue) |
+| `failClosed` | boolean | `true` | Block model calls when budget is exhausted or reservation is denied (`false` = warn, allow, and track cost locally). See [`failClosed` behavior](#failclosed--block-vs-allow-on-budget-denial). |
 | `logLevel` | string | `info` | `debug` / `info` / `warn` / `error` |
 
 ### Budget Thresholds
@@ -565,7 +567,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|-----------|--------------|
 | **healthy** | `remaining > lowBudgetThreshold` | Pass through — no intervention |
 | **low** | `exhaustedThreshold < remaining <= lowBudgetThreshold` | Apply low-budget strategies, inject warnings |
-| **exhausted** | `remaining <= exhaustedThreshold` | Block execution (`failClosed=true`) or warn (`failClosed=false`) |
+| **exhausted** | `remaining <= exhaustedThreshold` | Block execution (`failClosed=true`) or warn + track locally (`failClosed=false`) |
 
 ### Hook: `before_model_resolve`
 
@@ -617,8 +619,8 @@ Model fallbacks support both single values and ordered chains:
 ```json
 {
   "modelFallbacks": {
-    "opus": ["sonnet", "haiku"],
-    "gpt-4o": "gpt-4o-mini"
+    "anthropic/claude-opus-4-20250514": ["anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-4-5-20251001"],
+    "openai/gpt-4o": "openai/gpt-4o-mini"
   }
 }
 ```
@@ -685,11 +687,31 @@ import { BudgetExhaustedError, ToolBudgetDeniedError } from "@runcycles/openclaw
 - **`BudgetExhaustedError`** (`code: "BUDGET_EXHAUSTED"`) — thrown when budget is exhausted and `failClosed=true`. Includes `remaining`, `tenant`, and `budgetId` properties. The error message includes an actionable hint to increase budget via the Cycles API.
 - **`ToolBudgetDeniedError`** (`code: "TOOL_BUDGET_DENIED"`) — available as a structured error type for tool denials. Includes `toolName` property.
 
-### Fail-Open Behavior
+### `failClosed` — Block vs. Allow on Budget Denial
 
-- If the Cycles server is **unreachable**, the plugin assumes healthy budget (fail-open)
+The `failClosed` setting (default: `true`) controls what happens when a model reservation is denied — either because the budget is exhausted or because the Cycles server rejects the reservation (e.g., the estimated cost exceeds remaining budget).
+
+**`failClosed: true`** — The plugin blocks the model call. It returns a synthetic model override (`__cycles_budget_exhausted__`) that causes the LLM provider to reject the request. The agent stops. Use this in production when overspend is unacceptable.
+
+**`failClosed: false`** — The plugin logs a warning and allows the model call to proceed. The estimated cost is tracked locally (session summary, cost breakdown, forecasting) even though no server-side reservation was committed. Use this for shadow/monitoring mode — you see what *would* have been blocked without disrupting the agent.
+
+| Scenario | `failClosed: true` | `failClosed: false` |
+|---|---|---|
+| Budget exhausted (cached snapshot) | Block | Warn + allow |
+| Server denies reservation (estimate > remaining) | Block | Warn + allow + track cost locally |
+| Low-budget call limit reached | Block | Warn + allow |
+| Tool reservation denied | Always block | Always block |
+
+> **Note:** Tool denials always block regardless of `failClosed` — tools have no fallback mechanism like models do.
+
+### Fail-Open Behavior (Network Errors)
+
+Separately from `failClosed`, the plugin handles **network/transient errors** with a fail-open strategy:
+
+- If the Cycles server is **unreachable**, the plugin assumes healthy budget and allows execution
 - If a **commit fails**, execution continues (logged but non-blocking)
-- `failClosed` only controls behavior when budget is **confirmed exhausted**
+
+This is always fail-open regardless of `failClosed` — a transient network blip should not kill every agent. `failClosed` only controls behavior when the server **confirms** the budget is insufficient.
 
 ## Troubleshooting
 
