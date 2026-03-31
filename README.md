@@ -402,7 +402,7 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | `cyclesBaseUrl` | string | — | Cycles server URL (required) |
 | `cyclesApiKey` | string | — | Cycles API key (required) |
 | `tenant` | string | — | Cycles tenant identifier (required) |
-| `budgetId` | string | — | Optional app-level scope for balance queries and reservations |
+| `budgetId` | string | — | App-level budget scope. See [Budget Scoping with `budgetId`](#budget-scoping-with-budgetid). |
 | `currency` | string | `USD_MICROCENTS` | Default budget unit for all reservations |
 | `failClosed` | boolean | `true` | Block model calls when budget is exhausted or reservation is denied (`false` = warn, allow, and track cost locally). See [`failClosed` behavior](#failclosed--block-vs-allow-on-budget-denial). |
 | `logLevel` | string | `info` | `debug` / `info` / `warn` / `error` |
@@ -579,11 +579,60 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 | `onSessionEnd` | function | — | Callback with session summary at agent end |
 | `analyticsWebhookUrl` | string | — | POST webhook URL for session summary data |
 
-### Budget Pools
+### Budget Scoping with `budgetId`
+
+By default, the plugin tracks all spend against the **tenant-level** budget. If you run multiple agents or applications under the same tenant, they share one budget pool — one agent can consume the entire budget and starve others.
+
+`budgetId` maps to the **app** scope level in the Cycles protocol. It gives each application its own isolated budget:
+
+```
+tenant: "my-org"           ← shared across all apps
+  app: "research-agent"    ← $5 budget (budgetId)
+  app: "coding-agent"      ← $10 budget (budgetId)
+```
+
+**Step 1: Create the app-level budget in Cycles** (via the Admin API):
+
+```bash
+curl -X POST http://localhost:7979/v1/scopes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant": "my-org",
+    "app": "research-agent",
+    "allocated": { "unit": "USD_MICROCENTS", "amount": 500000000 }
+  }'
+```
+
+**Step 2: Set `budgetId` in the plugin config:**
+
+```json
+{
+  "tenant": "my-org",
+  "budgetId": "research-agent"
+}
+```
+
+The plugin then:
+- Queries balances filtered to `app: "research-agent"`
+- Creates reservations scoped to `app: "research-agent"`
+- Reports spend against that app's budget, not the tenant total
+
+**When to use `budgetId`:**
+- Multiple agents under the same tenant that need isolated budgets
+- Per-project or per-team spend tracking
+- Preventing one agent from consuming the entire tenant budget
+
+**When to skip it:**
+- Single agent setup — tenant-level budget is sufficient
+- You want all agents to share a single budget pool
+
+### Budget Pools (Team Visibility)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `parentBudgetId` | string | — | Parent budget ID — when set, pool balance is included in hints |
+| `parentBudgetId` | string | — | Parent budget scope — when set, the team/pool balance is included in prompt hints |
+
+`parentBudgetId` is a read-only visibility feature. When set, the plugin fetches the parent scope's balance and includes it in the prompt hint (e.g., "Team pool: 50000000 remaining"). It does **not** enforce the parent budget — enforcement happens at the app level via `budgetId`.
 
 ### Model Cost Reconciliation (v0.5.0)
 
