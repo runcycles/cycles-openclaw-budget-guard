@@ -626,6 +626,19 @@ The plugin then:
 - Single agent setup — tenant-level budget is sufficient
 - You want all agents to share a single budget pool
 
+**Cycles scope hierarchy and what the plugin supports:**
+
+The Cycles protocol supports a full scope hierarchy: `tenant` → `workspace` → `app` → `workflow` → `agent` → `toolset`. This plugin uses two levels:
+
+| Cycles scope | Plugin config | Used for |
+|---|---|---|
+| `tenant` | `tenant` (required) | Top-level budget boundary |
+| `app` | `budgetId` (optional) | Per-application budget isolation |
+| `dimensions.user` | `userId` | Per-user spend tracking within a scope |
+| `dimensions.session` | `sessionId` | Per-session spend tracking within a scope |
+
+The `workspace`, `workflow`, `agent`, and `toolset` scope levels are part of the Cycles protocol but are not exposed in this plugin. For most OpenClaw use cases, `tenant` + `budgetId` provides sufficient isolation. If you need deeper scoping (e.g., per-workflow budgets), use the [Cycles client library](https://github.com/runcycles/cycles-client-typescript) directly.
+
 ### Budget Pools (Team Visibility)
 
 | Field | Type | Default | Description |
