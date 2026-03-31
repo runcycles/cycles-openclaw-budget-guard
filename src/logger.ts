@@ -29,3 +29,30 @@ export function createLogger(minLevel: string): OpenClawLogger {
     },
   };
 }
+
+/**
+ * Wrap an existing logger with level filtering.
+ * Messages below minLevel are silently dropped.
+ */
+export function wrapLogger(delegate: OpenClawLogger, minLevel: string): OpenClawLogger {
+  const threshold = LEVELS[(minLevel as Level)] ?? LEVELS.info;
+
+  function shouldLog(level: Level): boolean {
+    return LEVELS[level] >= threshold;
+  }
+
+  return {
+    debug(msg, ...args) {
+      if (shouldLog("debug")) delegate.debug(msg, ...args);
+    },
+    info(msg, ...args) {
+      if (shouldLog("info")) delegate.info(msg, ...args);
+    },
+    warn(msg, ...args) {
+      if (shouldLog("warn")) delegate.warn(msg, ...args);
+    },
+    error(msg, ...args) {
+      if (shouldLog("error")) delegate.error(msg, ...args);
+    },
+  };
+}

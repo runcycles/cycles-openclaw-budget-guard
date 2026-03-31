@@ -83,7 +83,16 @@ export async function fetchBudgetState(
   const match = findMatchingBalance(parsed.balances, config);
 
   if (!match) {
-    logger.debug("No matching balance found for configured scope; assuming healthy");
+    if (config.budgetId) {
+      logger.warn(
+        `No balance found for budgetId="${config.budgetId}" (currency=${config.currency}). ` +
+        `Verify the app scope exists in Cycles and has an allocated budget. ` +
+        `Note: budgetId maps to the "app" scope — it is not the ledger_id. ` +
+        `Falling back to healthy (remaining=Infinity).`,
+      );
+    } else {
+      logger.debug("No matching balance found for configured scope; assuming healthy");
+    }
     return { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
   }
 
