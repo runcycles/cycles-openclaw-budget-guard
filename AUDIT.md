@@ -27,11 +27,11 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6 fixes budget enforcement bugs and config validation gaps.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation.
 
 ---
 
-## v0.7.6 Changes (2026-03-30)
+## v0.7.6–v0.7.9 Changes (2026-03-30 – 2026-03-31)
 
 ### Bug fixes
 
@@ -43,6 +43,9 @@
 | `toolCallLimits` never enforced | OpenClaw calls the plugin entrypoint multiple times per session (once per channel/worker). Each call ran `initHooks()` which reset `toolCallCounts` to empty, so `toolCallLimits` could never trigger. Now `initHooks` only resets session state on the first call; subsequent calls preserve accumulated counters. | `src/hooks.ts:initHooks` |
 | `modelFallbacks` not gated by `lowBudgetStrategies` | Model downgrade logic ran whenever budget was "low", ignoring whether `"downgrade_model"` was in `lowBudgetStrategies`. Every other strategy was properly gated. Now consistent — removing `"downgrade_model"` from strategies disables model downgrading. | `src/hooks.ts:beforeModelResolve` |
 | `limit_remaining_calls` didn't count model calls | `remainingCallsAllowed` was only decremented by tool calls, never model calls. An agent making only model calls while budget was "low" would never hit the limit. Now both model and tool calls decrement the shared counter. | `src/hooks.ts:beforeModelResolve` |
+| `modelOverride` double-prefixed by OpenClaw | When `modelFallbacks` values used `provider/model` format, OpenClaw prepended the provider again (e.g., `openai/openai/gpt-5-nano`). Now strips the provider prefix from `modelOverride` before returning to OpenClaw. | `src/hooks.ts:beforeModelResolve` |
+| `logLevel` config had no effect | The plugin always used OpenClaw's `api.logger` directly, bypassing the configured `logLevel`. Now wraps `api.logger` with level filtering so `logLevel: "error"` actually suppresses debug/info/warn. | `src/index.ts`, `src/logger.ts` |
+| No warning when `budgetId` doesn't match any scope | When `budgetId` was set but no matching app scope existed in Cycles, the plugin silently fell back to `remaining: Infinity`. Now logs a warning explaining that `budgetId` is the app scope name, not the `ledger_id`. | `src/cycles.ts:fetchBudgetState` |
 
 ### Startup config validation
 
@@ -62,17 +65,22 @@ Added `lowBudgetStrategies` and `maxRemainingCallsWhenLow` to the startup banner
 - README: All config examples use `provider/model` format (e.g., `openai/gpt-4o`, `anthropic/claude-opus-4-20250514`)
 - README: Added note explaining model names must match OpenClaw's `provider/model` format
 - README: Updated `failClosed` config table description with link to behavior section
-- docs repo: Fixed model names in `how-to/integrating-cycles-with-openclaw.md` and homepage snippet
+- README: Expanded `lowBudgetStrategies` section with full descriptions, examples, and execution order
+- README: Added `budgetId` scoping section with Cycles scope hierarchy, setup steps, and examples
+- README: Added function-type config section explaining JSON alternatives and OpenClaw limitations
+- README: Added cost tuning workflow using session summaries
+- docs repo: Fixed model names in `how-to/integrating-cycles-with-openclaw.md`, homepage snippet, and 2 blog posts
+- CI: Added `npm install -g npm@latest` to publish job to fix missing README on npmjs.com
 
 ### Test coverage
 
-| Metric | v0.7.5 | v0.7.6 |
+| Metric | v0.7.5 | v0.7.9 |
 |---|---|---|
-| Test count | 300 | 312 |
+| Test count | 300 | 314 |
 | Test files | 10 | 10 |
-| Statement coverage | 99.47% | 99.37% |
-| Branch coverage | 97.74% | 97.57% |
-| Line coverage | 100% | 100% |
+| Statement coverage | 99.47% | 99.02% |
+| Branch coverage | 97.74% | 96.73% |
+| Line coverage | 100% | 99.86% |
 
 ---
 
