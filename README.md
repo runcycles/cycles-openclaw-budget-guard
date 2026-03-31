@@ -625,49 +625,33 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|------|---------|-------------|
 | `enableEventLog` | boolean | `false` | Record every reserve/commit/deny/block decision in `sessionSummary.eventLog` |
 
-### Function-Type Config (Advanced)
+### Function-Type Config — Not Available in OpenClaw
 
-Several config parameters require JavaScript functions (`costEstimator`, `modelCostEstimator`, `onBudgetTransition`, `onSessionEnd`, `onBurnRateAnomaly`, `onExhaustionForecast`, `metricsEmitter`). These **cannot be set in JSON config files** — they require programmatic plugin registration.
+The config reference includes several function-type parameters (`costEstimator`, `modelCostEstimator`, `onBudgetTransition`, `onSessionEnd`, `onBurnRateAnomaly`, `onExhaustionForecast`, `metricsEmitter`). **These cannot be used with OpenClaw.** OpenClaw plugins are configured via JSON only — there is no mechanism to pass JavaScript functions.
 
-**Most users don't need them.** Every function parameter has a JSON-configurable alternative:
+Use these JSON-configurable alternatives instead:
 
-| Function param | JSON alternative | What the alternative does |
+| Instead of... | Use... | How it works |
 |---|---|---|
-| `costEstimator` | `toolBaseCosts` | Fixed cost per tool (covers most cases) |
-| `modelCostEstimator` | `modelBaseCosts` | Fixed cost per model |
-| `onBudgetTransition` | `budgetTransitionWebhookUrl` | HTTP POST on level change |
-| `onSessionEnd` | `analyticsWebhookUrl` | HTTP POST with session summary |
-| `onBurnRateAnomaly` | `otlpMetricsEndpoint` | Metrics emitted to OTLP backend |
-| `onExhaustionForecast` | `otlpMetricsEndpoint` | Metrics emitted to OTLP backend |
-| `metricsEmitter` | `otlpMetricsEndpoint` | Auto-creates an OTLP emitter |
+| `costEstimator` | `toolBaseCosts` | Fixed cost per tool. Tune estimates using session summary data. |
+| `modelCostEstimator` | `modelBaseCosts` | Fixed cost per model. |
+| `onBudgetTransition` | `budgetTransitionWebhookUrl` | Sends HTTP POST with level change event to your endpoint. |
+| `onSessionEnd` | `analyticsWebhookUrl` | Sends HTTP POST with full session summary to your endpoint. |
+| `onBurnRateAnomaly` | `otlpMetricsEndpoint` | Emits `cycles.budget.burn_rate_anomaly` counter to your OTLP backend. |
+| `onExhaustionForecast` | `otlpMetricsEndpoint` | Emits `cycles.budget.exhaustion_forecast_ms` gauge to your OTLP backend. |
+| `metricsEmitter` | `otlpMetricsEndpoint` | Auto-creates an OTLP emitter — no custom code needed. |
 
-If you do need function params (e.g., dynamic cost estimation based on response size), register the plugin programmatically instead of via JSON config:
+**Tuning cost estimates without a callback:**
 
-```typescript
-import budgetGuard from "@runcycles/openclaw-budget-guard";
+1. Start with rough values in `toolBaseCosts` / `modelBaseCosts` (or use defaults)
+2. Set `enableEventLog: true` in your config
+3. Run a few agent sessions
+4. Check the session summary in the logs — it shows per-tool and per-model cost breakdowns, plus an `unconfiguredTools` list of tools using the default estimate
+5. Adjust your cost values based on actual usage patterns and re-run
 
-// In your OpenClaw plugin setup script:
-export default function (api) {
-  budgetGuard({
-    ...api,
-    pluginConfig: {
-      tenant: "my-org",
-      cyclesBaseUrl: process.env.CYCLES_BASE_URL,
-      cyclesApiKey: process.env.CYCLES_API_KEY,
-      defaultModelName: "openai/gpt-4o",
-      toolBaseCosts: { web_search: 500000 },
-      costEstimator: ({ toolName, estimate, durationMs }) => {
-        // Scale cost by duration for long-running tools
-        if (durationMs > 10000) return estimate * 2;
-        return undefined; // use default estimate
-      },
-      onSessionEnd: (summary) => {
-        console.log(`Session spent ${summary.spent} ${summary.level}`);
-      },
-    },
-  });
-};
-```
+This iterative approach is more practical than writing a cost estimator function, since the estimates only need to be "close enough" — Cycles reservations lock the estimated amount and commits charge the actual.
+
+> **Why do the function params exist?** The plugin is also published as an npm package. The function API is available for developers who import the plugin as a library in custom agent frameworks or test harnesses — not for standard OpenClaw JSON config.
 
 ## How It Works
 
