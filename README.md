@@ -625,6 +625,50 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 |-------|------|---------|-------------|
 | `enableEventLog` | boolean | `false` | Record every reserve/commit/deny/block decision in `sessionSummary.eventLog` |
 
+### Function-Type Config (Advanced)
+
+Several config parameters require JavaScript functions (`costEstimator`, `modelCostEstimator`, `onBudgetTransition`, `onSessionEnd`, `onBurnRateAnomaly`, `onExhaustionForecast`, `metricsEmitter`). These **cannot be set in JSON config files** — they require programmatic plugin registration.
+
+**Most users don't need them.** Every function parameter has a JSON-configurable alternative:
+
+| Function param | JSON alternative | What the alternative does |
+|---|---|---|
+| `costEstimator` | `toolBaseCosts` | Fixed cost per tool (covers most cases) |
+| `modelCostEstimator` | `modelBaseCosts` | Fixed cost per model |
+| `onBudgetTransition` | `budgetTransitionWebhookUrl` | HTTP POST on level change |
+| `onSessionEnd` | `analyticsWebhookUrl` | HTTP POST with session summary |
+| `onBurnRateAnomaly` | `otlpMetricsEndpoint` | Metrics emitted to OTLP backend |
+| `onExhaustionForecast` | `otlpMetricsEndpoint` | Metrics emitted to OTLP backend |
+| `metricsEmitter` | `otlpMetricsEndpoint` | Auto-creates an OTLP emitter |
+
+If you do need function params (e.g., dynamic cost estimation based on response size), register the plugin programmatically instead of via JSON config:
+
+```typescript
+import budgetGuard from "@runcycles/openclaw-budget-guard";
+
+// In your OpenClaw plugin setup script:
+export default function (api) {
+  budgetGuard({
+    ...api,
+    pluginConfig: {
+      tenant: "my-org",
+      cyclesBaseUrl: process.env.CYCLES_BASE_URL,
+      cyclesApiKey: process.env.CYCLES_API_KEY,
+      defaultModelName: "openai/gpt-4o",
+      toolBaseCosts: { web_search: 500000 },
+      costEstimator: ({ toolName, estimate, durationMs }) => {
+        // Scale cost by duration for long-running tools
+        if (durationMs > 10000) return estimate * 2;
+        return undefined; // use default estimate
+      },
+      onSessionEnd: (summary) => {
+        console.log(`Session spent ${summary.spent} ${summary.level}`);
+      },
+    },
+  });
+};
+```
+
 ## How It Works
 
 ### Budget Levels
