@@ -627,7 +627,7 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 
 ### Function-Type Config (Advanced)
 
-Several config parameters require JavaScript functions (`costEstimator`, `modelCostEstimator`, `onBudgetTransition`, `onSessionEnd`, `onBurnRateAnomaly`, `onExhaustionForecast`, `metricsEmitter`). These **cannot be set in JSON config files** — they require programmatic plugin registration.
+Several config parameters require JavaScript functions (`costEstimator`, `modelCostEstimator`, `onBudgetTransition`, `onSessionEnd`, `onBurnRateAnomaly`, `onExhaustionForecast`, `metricsEmitter`). These **cannot be set in JSON config files**.
 
 **Most users don't need them.** Every function parameter has a JSON-configurable alternative:
 
@@ -641,33 +641,9 @@ Several config parameters require JavaScript functions (`costEstimator`, `modelC
 | `onExhaustionForecast` | `otlpMetricsEndpoint` | Metrics emitted to OTLP backend |
 | `metricsEmitter` | `otlpMetricsEndpoint` | Auto-creates an OTLP emitter |
 
-If you do need function params (e.g., dynamic cost estimation based on response size), register the plugin programmatically instead of via JSON config:
+The JSON alternatives cover the most common use cases. Use `toolBaseCosts`/`modelBaseCosts` for cost estimation, webhook URLs for notifications, and `otlpMetricsEndpoint` for observability.
 
-```typescript
-import budgetGuard from "@runcycles/openclaw-budget-guard";
-
-// In your OpenClaw plugin setup script:
-export default function (api) {
-  budgetGuard({
-    ...api,
-    pluginConfig: {
-      tenant: "my-org",
-      cyclesBaseUrl: process.env.CYCLES_BASE_URL,
-      cyclesApiKey: process.env.CYCLES_API_KEY,
-      defaultModelName: "openai/gpt-4o",
-      toolBaseCosts: { web_search: 500000 },
-      costEstimator: ({ toolName, estimate, durationMs }) => {
-        // Scale cost by duration for long-running tools
-        if (durationMs > 10000) return estimate * 2;
-        return undefined; // use default estimate
-      },
-      onSessionEnd: (summary) => {
-        console.log(`Session spent ${summary.spent} ${summary.level}`);
-      },
-    },
-  });
-};
-```
+Function params are available for applications that import the plugin as a library and call it programmatically (e.g., custom agent frameworks, test harnesses, or wrappers that build on top of OpenClaw). They are not used in standard OpenClaw JSON plugin configuration.
 
 ## How It Works
 
