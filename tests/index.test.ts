@@ -267,7 +267,38 @@ describe("plugin entrypoint", () => {
     };
 
     registerPlugin(api);
-    expect(mockInitHooks).toHaveBeenCalledWith(resolvedConfig, logger);
+    expect(mockInitHooks).toHaveBeenCalledWith(resolvedConfig, expect.objectContaining({
+      debug: expect.any(Function),
+      info: expect.any(Function),
+      warn: expect.any(Function),
+      error: expect.any(Function),
+    }));
+  });
+
+  it("wraps api.logger with logLevel filtering", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      logLevel: "warn",
+      lowBudgetStrategies: [],
+      toolBaseCosts: { x: 1 },
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+
+    // The wrapped logger is passed to initHooks — call it to test filtering
+    const wrappedLogger = mockInitHooks.mock.calls[0][1];
+    wrappedLogger.debug("should be filtered");
+    wrappedLogger.info("should be filtered");
+    wrappedLogger.warn("should pass");
+    wrappedLogger.error("should pass");
+
+    // debug and info should NOT reach the delegate
+    expect(logger.debug).not.toHaveBeenCalledWith("should be filtered");
+    expect(logger.info).not.toHaveBeenCalledWith("should be filtered");
+    // warn and error should reach the delegate
+    expect(logger.warn).toHaveBeenCalledWith("should pass");
+    expect(logger.error).toHaveBeenCalledWith("should pass");
   });
 
   it("warns when downgrade_model strategy has no modelFallbacks", () => {

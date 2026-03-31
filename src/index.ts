@@ -16,6 +16,7 @@ import {
   agentEnd,
 } from "./hooks.js";
 import { createOtlpEmitter } from "./metrics-otlp.js";
+import { wrapLogger } from "./logger.js";
 import { PLUGIN_VERSION } from "./version.js";
 
 import type { OpenClawPluginApi } from "./types.js";
@@ -218,7 +219,7 @@ export default function (api: OpenClawPluginApi): void {
     );
   }
 
-  initHooks(config, api.logger);
+  initHooks(config, wrapLogger(api.logger, config.logLevel));
 
   api.on("before_model_resolve", beforeModelResolve, {
     name: "openclaw-budget-guard:before_model_resolve",
