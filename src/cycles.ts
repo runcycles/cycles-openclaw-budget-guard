@@ -147,6 +147,9 @@ function findMatchingBalance(
         b.scopePath.includes(config.budgetId!),
     );
     if (specific) return specific;
+    // budgetId is set but no balance matches — don't fall back to tenant balance
+    // as that would silently ignore the budgetId config
+    return undefined;
   }
 
   // Return the most specific (longest scopePath) balance
