@@ -591,17 +591,20 @@ tenant: "my-org"           ← shared across all apps
   app: "coding-agent"      ← $10 budget (budgetId)
 ```
 
-**Step 1: Create the app-level budget in Cycles** (via the Admin API):
+**Step 1: Create and fund the app-level budget in Cycles** (via the Admin API):
 
 ```bash
-curl -X POST http://localhost:7979/v1/scopes \
+curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org/app:research-agent&unit=USD_MICROCENTS" \
+  -H "X-Cycles-API-Key: your-admin-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "tenant": "my-org",
-    "app": "research-agent",
-    "allocated": { "unit": "USD_MICROCENTS", "amount": 500000000 }
+    "operation": "CREDIT",
+    "amount": 500000000,
+    "idempotency_key": "fund-research-agent-001"
   }'
 ```
+
+This creates the `app:research-agent` scope under `tenant:my-org` and funds it with 500,000,000 units ($5.00). The scope is created automatically if it doesn't exist.
 
 **Step 2: Set `budgetId` in the plugin config:**
 
