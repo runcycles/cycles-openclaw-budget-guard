@@ -66,9 +66,9 @@
       },
       "toolBaseCosts": {
         "type": "object",
-        "additionalProperties": { "type": "number" },
+        "additionalProperties": { "type": "number", "minimum": 0 },
         "default": {},
-        "description": "Map from tool name to estimated cost in the configured currency unit."
+        "description": "Map from tool name to estimated cost in the configured currency unit. Values must be non-negative."
       },
       "injectPromptBudgetHint": {
         "type": "boolean",
@@ -93,14 +93,15 @@
       },
       "modelBaseCosts": {
         "type": "object",
-        "additionalProperties": { "type": "number" },
+        "additionalProperties": { "type": "number", "minimum": 0 },
         "default": {},
-        "description": "Map from model name to estimated cost per completion in the configured currency."
+        "description": "Map from model name to estimated cost per completion in the configured currency. Values must be non-negative."
       },
       "defaultModelCost": {
         "type": "number",
         "default": 500000,
-        "description": "Fallback cost per model completion when model is not in modelBaseCosts."
+        "minimum": 0,
+        "description": "Fallback cost per model completion when model is not in modelBaseCosts. Must be non-negative."
       },
       "defaultModelName": {
         "type": "string",
@@ -155,7 +156,7 @@
       },
       "lowBudgetStrategies": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": { "type": "string", "enum": ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls"] },
         "default": ["downgrade_model"],
         "description": "Ordered list of strategies to apply when budget is low: downgrade_model, reduce_max_tokens, disable_expensive_tools, limit_remaining_calls."
       },

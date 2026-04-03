@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies and fallbacks, and error prefix consistency.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case.
 
 ---
 
@@ -63,9 +63,9 @@
 | Metric | v0.7.9 | v0.7.10 |
 |---|---|---|
 | Test count | 314 | 341 |
-| Statement coverage | 99.14% | 98.83% |
-| Branch coverage | 96.88% | 96.71% |
-| Line coverage | 100% | 99.49% |
+| Statement coverage | 99.14% | 98.85% |
+| Branch coverage | 96.88% | 96.60% |
+| Line coverage | 100% | 99.50% |
 
 ---
 
