@@ -561,4 +561,32 @@ describe("plugin entrypoint", () => {
     expect(warnCalls.some(msg => msg.includes("gpt-3.5"))).toBe(true);
     expect(warnCalls.some(msg => msg.includes("gpt-4o-mini"))).toBe(false);
   });
+
+  it("warns when both budgetScope and budgetId are set", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      budgetScope: { app: "new" },
+      budgetId: "new",
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, pluginConfig: { budgetScope: { app: "new" }, budgetId: "old" }, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Both "budgetScope" and "budgetId" are set'),
+    );
+  });
+
+  it("logs deprecation info when only budgetId is set", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      budgetScope: { app: "my-app" },
+      budgetId: "my-app",
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, pluginConfig: { budgetId: "my-app" }, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('"budgetId" is deprecated'),
+    );
+  });
 });

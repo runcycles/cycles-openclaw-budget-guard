@@ -1,7 +1,7 @@
 {
   "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.7.10",
+  "version": "0.8.0",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -26,7 +26,12 @@
       },
       "budgetId": {
         "type": "string",
-        "description": "Optional budget identifier for more specific scope targeting."
+        "description": "Deprecated — use budgetScope instead. Maps to budgetScope: { app: budgetId }."
+      },
+      "budgetScope": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Scope segments for targeting a specific budget in the Cycles hierarchy. Keys are scope levels (workspace, app, workflow, agent, toolset), values are identifiers. Example: { \"workspace\": \"road\", \"app\": \"lane\" }."
       },
       "currency": {
         "type": "string",

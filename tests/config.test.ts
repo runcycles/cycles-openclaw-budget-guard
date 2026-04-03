@@ -483,4 +483,29 @@ describe("resolveConfig", () => {
       resolveConfig({ ...minValid, defaultModelCost: -1 }),
     ).toThrow("defaultModelCost (-1) must be non-negative");
   });
+
+  // v0.8.0: budgetScope
+  it("resolves budgetScope from budgetScope config", () => {
+    const cfg = resolveConfig({ ...minValid, budgetScope: { workspace: "road", app: "lane" } });
+    expect(cfg.budgetScope).toEqual({ workspace: "road", app: "lane" });
+    expect(cfg.budgetId).toBe("lane");
+  });
+
+  it("converts budgetId to budgetScope for backward compatibility", () => {
+    const cfg = resolveConfig({ ...minValid, budgetId: "my-app" });
+    expect(cfg.budgetScope).toEqual({ app: "my-app" });
+    expect(cfg.budgetId).toBe("my-app");
+  });
+
+  it("budgetScope takes precedence over budgetId", () => {
+    const cfg = resolveConfig({ ...minValid, budgetId: "old-app", budgetScope: { workspace: "w", app: "new-app" } });
+    expect(cfg.budgetScope).toEqual({ workspace: "w", app: "new-app" });
+    expect(cfg.budgetId).toBe("new-app");
+  });
+
+  it("leaves budgetScope undefined when neither set", () => {
+    const cfg = resolveConfig(minValid);
+    expect(cfg.budgetScope).toBeUndefined();
+    expect(cfg.budgetId).toBeUndefined();
+  });
 });
