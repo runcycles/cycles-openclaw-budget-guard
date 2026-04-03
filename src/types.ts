@@ -187,6 +187,7 @@ export interface MetricsEmitter {
   gauge(name: string, value: number, tags?: Record<string, string>): void;
   counter(name: string, delta: number, tags?: Record<string, string>): void;
   histogram(name: string, value: number, tags?: Record<string, string>): void;
+  flush?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

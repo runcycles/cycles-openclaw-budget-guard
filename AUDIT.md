@@ -1,9 +1,9 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
-**Date:** 2026-03-27
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.3
+**Date:** 2026-04-03
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.10
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
-**Cycles client:** `runcycles` ^0.1.1
+**Cycles client:** `runcycles` ^0.2.0
 
 ---
 
@@ -27,7 +27,31 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, and DryRunClient ID isolation.
+
+---
+
+## v0.7.10 Changes (2026-04-03)
+
+### Bug fixes
+
+| Fix | Description | Location |
+|---|---|---|
+| `matchGlob` only supports prefix/suffix wildcards | Patterns like `aws_*_tool` did not match `aws_s3_tool`. Rewrote to convert glob patterns to regex, supporting `*` anywhere in the pattern. | `src/budget.ts:matchGlob` |
+| Module-level `nextId` in DryRunClient | Counter was shared across all DryRunClient instances. Moved to instance field so each client has independent IDs. | `src/dry-run.ts` |
+| Event log O(n) `shift()` for eviction | `eventLog.shift()` is O(n) on a 10,000-element array. Changed to drop new entries when cap is reached. | `src/hooks.ts:logEvent` |
+| `asStringRecord`/`asNumberRecord` skip value validation | Cast objects without checking individual values were the correct type. Added `.every()` checks matching the pattern used by `asStringArray`/`asNumberArray`. | `src/config.ts` |
+| `fireWebhook` has no timeout | Webhook fetch calls had no timeout, risking indefinitely held connections. Added `AbortSignal.timeout(10_000)`. | `src/hooks.ts:fireWebhook` |
+| OTLP metrics not flushed at `agentEnd` | Buffered metrics could be lost on process exit. Added optional `flush?()` to `MetricsEmitter` interface and call it at end of `agentEnd`. | `src/types.ts`, `src/hooks.ts:agentEnd` |
+
+### Test coverage
+
+| Metric | v0.7.9 | v0.7.10 |
+|---|---|---|
+| Test count | 314 | 328 |
+| Statement coverage | 99.14% | 99.15% |
+| Branch coverage | 96.88% | 96.90% |
+| Line coverage | 100% | 100% |
 
 ---
 

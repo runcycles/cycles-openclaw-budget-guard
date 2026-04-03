@@ -5,8 +5,6 @@
  * as a drop-in replacement. Tracks budget locally in-memory.
  */
 
-let nextId = 0;
-
 export class DryRunClient {
   private remaining: number;
   private spent = 0;
@@ -14,6 +12,7 @@ export class DryRunClient {
   private allocated: number;
   private reservations = new Map<string, number>();
   private currency: string;
+  private nextId = 0;
 
   constructor(initialBudget: number, currency = "USD_MICROCENTS") {
     this.remaining = initialBudget;
@@ -54,7 +53,7 @@ export class DryRunClient {
       };
     }
 
-    const id = `dry-run-${++nextId}`;
+    const id = `dry-run-${++this.nextId}`;
     this.remaining -= estimate;
     this.reserved += estimate;
     this.reservations.set(id, estimate);

@@ -2806,8 +2806,7 @@ describe("coverage — event log cap", () => {
     mockCommitUsage.mockResolvedValue(undefined);
   });
 
-  it("evicts oldest entry when event log reaches capacity", async () => {
-    // Use a small event log capacity by filling it up
+  it("stops accepting entries when event log reaches capacity", async () => {
     setup({ enableEventLog: true, toolBaseCosts: { t: 100 } });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
@@ -2890,5 +2889,86 @@ describe("coverage — unconfigured tool report with zero calls", () => {
     // both tools should appear as unconfigured
     const names = unconfigured.map(t => t.name);
     expect(names).toContain("other_tool");
+  });
+});
+
+describe("v0.7.10 — webhook timeout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("passes AbortSignal to fetch for webhook calls", async () => {
+    setup({ budgetTransitionWebhookUrl: "https://example.com/hook" });
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    mockCommitUsage.mockResolvedValue(undefined);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    // First call sets lastKnownLevel to "healthy"
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Second call triggers transition → fires webhook
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // Webhook must have been called with AbortSignal
+    const webhookCall = mockFetch.mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].includes("example.com"),
+    );
+    expect(webhookCall).toBeDefined();
+    expect(webhookCall![1]).toHaveProperty("signal");
+  });
+});
+
+describe("v0.7.10 — metrics flush at agentEnd", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("flushes metrics emitter at agent_end", async () => {
+    const flushFn = vi.fn().mockResolvedValue(undefined);
+    const emitter = {
+      gauge: vi.fn(),
+      counter: vi.fn(),
+      histogram: vi.fn(),
+      flush: flushFn,
+    };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockReleaseReservation.mockResolvedValue(undefined);
+
+    await agentEnd({}, makeHookContext());
+    expect(flushFn).toHaveBeenCalled();
+  });
+
+  it("does not throw when metrics emitter has no flush", async () => {
+    const emitter = {
+      gauge: vi.fn(),
+      counter: vi.fn(),
+      histogram: vi.fn(),
+    };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockReleaseReservation.mockResolvedValue(undefined);
+
+    await expect(agentEnd({}, makeHookContext())).resolves.not.toThrow();
+  });
+
+  it("does not throw when flush rejects", async () => {
+    const flushFn = vi.fn().mockRejectedValue(new Error("flush failed"));
+    const emitter = {
+      gauge: vi.fn(),
+      counter: vi.fn(),
+      histogram: vi.fn(),
+      flush: flushFn,
+    };
+    setup({ metricsEmitter: emitter });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockReleaseReservation.mockResolvedValue(undefined);
+
+    await expect(agentEnd({}, makeHookContext())).resolves.not.toThrow();
   });
 });

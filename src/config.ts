@@ -237,7 +237,9 @@ function asStringRecord(
   v: unknown,
 ): Record<string, string> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, string>;
+    if (Object.values(v as Record<string, unknown>).every((val) => typeof val === "string")) {
+      return v as Record<string, string>;
+    }
   }
   return undefined;
 }
@@ -246,7 +248,9 @@ function asNumberRecord(
   v: unknown,
 ): Record<string, number> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, number>;
+    if (Object.values(v as Record<string, unknown>).every((val) => typeof val === "number")) {
+      return v as Record<string, number>;
+    }
   }
   return undefined;
 }

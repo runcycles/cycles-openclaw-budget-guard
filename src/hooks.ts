@@ -281,6 +281,7 @@ function fireWebhook(url: string, payload: unknown): void {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
   }).catch((err) => {
     logger.warn(`Webhook POST to ${url} failed:`, err);
   });
@@ -310,7 +311,7 @@ const MAX_EVENT_LOG_ENTRIES = 10_000;
 /** v0.6.0: Append to event log if enabled. Capped to prevent unbounded growth. */
 function logEvent(entry: ReservationLogEntry): void {
   if (!config.enableEventLog) return;
-  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) eventLog.shift();
+  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) return;
   eventLog.push(entry);
 }
 
@@ -1052,4 +1053,13 @@ export async function agentEnd(
   emitHistogram("cycles.session.duration_ms", durationMs);
   const totalCost = [...costBreakdown.values()].reduce((sum, e) => sum + e.totalCost, 0);
   emitHistogram("cycles.session.total_cost", totalCost);
+
+  // v0.7.10: Flush metrics emitter to ensure all datapoints are sent
+  if (metricsEmitter?.flush) {
+    try {
+      await metricsEmitter.flush();
+    } catch {
+      // Best-effort — metrics flush failure is non-fatal
+    }
+  }
 }

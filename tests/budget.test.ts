@@ -174,4 +174,25 @@ describe("isToolPermitted (Gap 7)", () => {
     const result = isToolPermitted("dangerous_tool", ["*"], ["dangerous_tool"]);
     expect(result.permitted).toBe(false);
   });
+
+  it("blocks tool matching blocklist with mid-pattern wildcard", () => {
+    const result = isToolPermitted("aws_s3_tool", undefined, ["aws_*_tool"]);
+    expect(result.permitted).toBe(false);
+  });
+
+  it("permits tool matching allowlist with mid-pattern wildcard", () => {
+    const result = isToolPermitted("aws_s3_tool", ["aws_*_tool"]);
+    expect(result.permitted).toBe(true);
+  });
+
+  it("does not match mid-pattern wildcard when segments differ", () => {
+    const result = isToolPermitted("gcp_s3_tool", ["aws_*_tool"]);
+    expect(result.permitted).toBe(false);
+    expect(result.reason).toContain("allowlist");
+  });
+
+  it("matches pattern with multiple wildcards", () => {
+    const result = isToolPermitted("a_foo_b_bar_c", undefined, ["a_*_b_*_c"]);
+    expect(result.permitted).toBe(false);
+  });
 });

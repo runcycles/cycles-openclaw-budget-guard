@@ -408,4 +408,28 @@ describe("resolveConfig", () => {
     expect(result.enableEventLog).toBe(false);
     expect(result.exhaustionWarningThresholdMs).toBe(120_000);
   });
+
+  it("rejects toolBaseCosts with non-number values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolBaseCosts: { web_search: "not_a_number" },
+    });
+    expect(cfg.toolBaseCosts).toEqual({});
+  });
+
+  it("rejects otlpMetricsHeaders with non-string values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      otlpMetricsHeaders: { Authorization: 123 },
+    });
+    expect(cfg.otlpMetricsHeaders).toBeUndefined();
+  });
+
+  it("accepts valid toolBaseCosts with all number values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolBaseCosts: { web_search: 5000, code_exec: 10000 },
+    });
+    expect(cfg.toolBaseCosts).toEqual({ web_search: 5000, code_exec: 10000 });
+  });
 });
