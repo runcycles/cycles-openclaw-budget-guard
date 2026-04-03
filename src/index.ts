@@ -74,6 +74,17 @@ export default function (api: OpenClawPluginApi): void {
     return;
   }
 
+  // v0.8.0: Warn if both budgetScope and budgetId are set
+  if (raw.budgetScope && raw.budgetId) {
+    api.logger.warn(
+      `[openclaw-budget-guard] Both "budgetScope" and "budgetId" are set. "budgetScope" takes precedence — "budgetId" is ignored. Remove "budgetId" to silence this warning.`,
+    );
+  } else if (raw.budgetId && !raw.budgetScope) {
+    api.logger.info(
+      `[openclaw-budget-guard] "budgetId" is deprecated — use "budgetScope": { "app": "${raw.budgetId}" } instead.`,
+    );
+  }
+
   // OpenClaw may call the plugin entrypoint multiple times (once per channel/worker).
   // Show the full banner only once; subsequent inits get a short one-liner.
   if (!startupBannerShown) {
@@ -97,7 +108,12 @@ export default function (api: OpenClawPluginApi): void {
       `  lowBudgetThreshold: ${config.lowBudgetThreshold}`,
       `  exhaustedThreshold: ${config.exhaustedThreshold}`,
     ];
-    if (config.budgetId) lines.push(`  budgetId: ${config.budgetId}`);
+    if (config.budgetScope) {
+      const scopeStr = Object.entries(config.budgetScope).map(([k, v]) => `${k}=${v}`).join(", ");
+      lines.push(`  budgetScope: {${scopeStr}}`);
+    } else if (config.budgetId) {
+      lines.push(`  budgetId: ${config.budgetId} (deprecated — use budgetScope)`);
+    }
     if (config.defaultModelName) lines.push(`  defaultModelName: ${config.defaultModelName}`);
     if (Object.keys(config.modelFallbacks).length > 0)
       lines.push(`  modelFallbacks: ${Object.keys(config.modelFallbacks).join(", ")}`);

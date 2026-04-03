@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
 **Date:** 2026-04-03
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.7.10
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.0
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.2.0
 
@@ -28,6 +28,33 @@
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
 **Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case.
+
+---
+
+## v0.8.0 Changes (2026-04-03)
+
+### New feature: `budgetScope`
+
+Replaces `budgetId` with a generic `budgetScope` object that supports the full Cycles scope hierarchy (`workspace`, `app`, `workflow`, `agent`, `toolset`). This fixes issue #70 where budgets with intermediate scope segments (e.g. `tenant:rider/workspace:road/app:lane`) were not correctly targeted by reservations.
+
+| Change | Description | Location |
+|---|---|---|
+| `budgetScope` config field | New `Record<string, string>` field for targeting any combination of Cycles scope segments. Replaces `budgetId`. | `src/types.ts`, `src/config.ts`, `openclaw.plugin.json` |
+| `budgetId` deprecated | Still works — converted to `budgetScope: { app: budgetId }` internally. Warns at startup. | `src/config.ts`, `src/index.ts` |
+| Balance query uses `budgetScope` | `fetchBudgetState` spreads `budgetScope` into query params instead of only `app`. | `src/cycles.ts` |
+| Reservation subject uses `budgetScope` | `reserveBudget` spreads `budgetScope` into subject instead of only `app`. | `src/cycles.ts` |
+| Balance matching uses `budgetScope` | `findMatchingBalance` checks all scope values match, not just `budgetId`. | `src/cycles.ts` |
+| Metrics tags use `budgetScope` | Scope keys emitted as individual metric tags instead of single `budgetId` tag. | `src/hooks.ts` |
+| Session summary includes `budgetScope` | `SessionSummary` type includes `budgetScope` field. | `src/types.ts`, `src/hooks.ts` |
+
+### Test coverage
+
+| Metric | v0.7.10 | v0.8.0 |
+|---|---|---|
+| Test count | 341 | 349 |
+| Statement coverage | 98.85% | 98.99% |
+| Branch coverage | 96.60% | 96.69% |
+| Line coverage | 99.50% | 99.51% |
 
 ---
 

@@ -108,12 +108,32 @@ export function resolveConfig(
     );
   }
 
+  // v0.8.0: Resolve budgetScope — budgetId is backward-compatible sugar
+  const rawBudgetScope = asStringRecord(raw.budgetScope);
+  const rawBudgetId = asString(raw.budgetId);
+  let budgetScope: Record<string, string> | undefined;
+  let budgetId: string | undefined;
+
+  if (rawBudgetScope && rawBudgetId) {
+    // budgetScope takes precedence; budgetId is ignored with a warning
+    // (warning is emitted in index.ts where logger is available)
+    budgetScope = rawBudgetScope;
+    budgetId = rawBudgetScope.app;
+  } else if (rawBudgetScope) {
+    budgetScope = rawBudgetScope;
+    budgetId = rawBudgetScope.app;
+  } else if (rawBudgetId) {
+    budgetId = rawBudgetId;
+    budgetScope = { app: rawBudgetId };
+  }
+
   return {
     enabled: asBool(raw.enabled) ?? true,
     cyclesBaseUrl,
     cyclesApiKey,
     tenant,
-    budgetId: asString(raw.budgetId),
+    budgetId,
+    budgetScope,
     currency: asString(raw.currency) ?? "USD_MICROCENTS",
     defaultModelActionKind:
       asString(raw.defaultModelActionKind) ?? "llm.completion",

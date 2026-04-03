@@ -2318,9 +2318,9 @@ describe("v0.5.0 — MetricsEmitter", () => {
     await expect(beforeModelResolve({ model: "gpt-4o" }, makeHookContext())).resolves.not.toThrow();
   });
 
-  it("includes budgetId in metric tags when configured", async () => {
+  it("includes budgetScope in metric tags when configured", async () => {
     const emitter = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
-    setup({ metricsEmitter: emitter, budgetId: "my-app" });
+    setup({ metricsEmitter: emitter, budgetScope: { app: "my-app" } });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
     mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
@@ -2330,7 +2330,7 @@ describe("v0.5.0 — MetricsEmitter", () => {
     expect(emitter.gauge).toHaveBeenCalledWith(
       "cycles.budget.remaining",
       expect.any(Number),
-      expect.objectContaining({ tenant: "test-tenant", budgetId: "my-app" }),
+      expect.objectContaining({ tenant: "test-tenant", app: "my-app" }),
     );
   });
 

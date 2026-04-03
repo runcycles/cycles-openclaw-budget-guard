@@ -9,7 +9,10 @@ export interface BudgetGuardConfig {
   cyclesBaseUrl: string;
   cyclesApiKey: string;
   tenant: string;
+  /** @deprecated Use `budgetScope` instead. Maps to `budgetScope: { app: budgetId }`. */
   budgetId?: string;
+  /** Scope segments for targeting a specific budget in the Cycles hierarchy (e.g. `{ workspace: "road", app: "lane" }`). */
+  budgetScope?: Record<string, string>;
   currency: string;
   defaultModelActionKind: string;
   defaultToolActionKindPrefix: string;
@@ -219,6 +222,7 @@ export interface BudgetStatusMetadata {
 export interface SessionSummary {
   tenant: string;
   budgetId?: string;
+  budgetScope?: Record<string, string>;
   userId?: string;
   sessionId?: string;
   remaining: number;
