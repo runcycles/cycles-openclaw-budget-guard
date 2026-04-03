@@ -137,10 +137,11 @@ function findMatchingBalance(
 
   // If budgetScope is set, prefer the balance whose scope/scopePath matches all segments
   if (config.budgetScope && Object.keys(config.budgetScope).length > 0) {
-    const scopeValues = Object.values(config.budgetScope);
+    // Cycles server lowercases all scope values — match case-insensitively
+    const scopeValues = Object.values(config.budgetScope).map((v) => v.toLowerCase());
     const specific = matching.find(
       (b) =>
-        scopeValues.every((v) => b.scope.includes(v) || b.scopePath.includes(v)),
+        scopeValues.every((v) => b.scope.toLowerCase().includes(v) || b.scopePath.toLowerCase().includes(v)),
     );
     if (specific) return specific;
     // budgetScope is set but no balance matches — don't fall back to tenant balance

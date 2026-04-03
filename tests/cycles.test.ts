@@ -222,6 +222,29 @@ describe("fetchBudgetState", () => {
     });
   });
 
+  it("matches balance case-insensitively when server lowercases scope values", async () => {
+    const cfg = makeConfig({ budgetScope: { app: "riderApp" } });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "app:riderapp",
+            scopePath: "tenant:test-tenant/app:riderapp",
+            remaining: { unit: "USD_MICROCENTS", amount: 69_000_000 },
+            allocated: { unit: "USD_MICROCENTS", amount: 69_000_000 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfg);
+    const snapshot = await fetchBudgetState(client, cfg, logger);
+
+    expect(snapshot.remaining).toBe(69_000_000);
+    expect(snapshot.level).toBe("healthy");
+  });
+
   it("omits app param when budgetId is undefined", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
