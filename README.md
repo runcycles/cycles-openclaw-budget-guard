@@ -174,7 +174,7 @@ To test without a live Cycles server:
 After restarting OpenClaw, check the logs for:
 
 ```
-  Cycles Budget Guard for OpenClaw v0.7.10
+  Cycles Budget Guard for OpenClaw v0.8.1
   https://runcycles.io
   tenant: my-org
   cyclesBaseUrl: http://localhost:7878
@@ -635,6 +635,8 @@ For simple app-only scoping, use just the `app` key:
 ```
 
 > **Migration from `budgetId`:** `budgetId` is deprecated but still works. `"budgetId": "research-agent"` is equivalent to `"budgetScope": { "app": "research-agent" }`. If both are set, `budgetScope` takes precedence.
+
+> **Note:** Scope values are case-insensitive. The Cycles server lowercases all values at creation time, and the plugin matches case-insensitively. `"app": "riderApp"` and `"app": "riderapp"` are equivalent.
 
 **When to use `budgetScope`:**
 - Multiple agents under the same tenant that need isolated budgets
