@@ -174,7 +174,7 @@ To test without a live Cycles server:
 After restarting OpenClaw, check the logs for:
 
 ```
-  Cycles Budget Guard for OpenClaw v0.6.1
+  Cycles Budget Guard for OpenClaw v0.7.10
   https://runcycles.io
   tenant: my-org
   cyclesBaseUrl: http://localhost:7878
@@ -660,7 +660,7 @@ The `workspace`, `workflow`, `agent`, and `toolset` scope levels are part of the
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `metricsEmitter` | object | — | Object with `gauge`/`counter`/`histogram` methods for observability pipeline integration |
+| `metricsEmitter` | object | — | Object with `gauge`/`counter`/`histogram` methods and optional `flush()` for observability pipeline integration. `flush()` is called at `agent_end` to ensure buffered metrics are sent. |
 | `aggressiveCacheInvalidation` | boolean | `true` | Proactively refetch budget snapshot after every commit/release for fresher data |
 | `otlpMetricsEndpoint` | string | — | OTLP HTTP endpoint for auto metrics export (e.g. `http://localhost:4318/v1/metrics`) |
 | `otlpMetricsHeaders` | object | — | Custom HTTP headers for OTLP requests |

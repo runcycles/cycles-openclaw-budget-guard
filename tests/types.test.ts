@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BudgetExhaustedError, ToolBudgetDeniedError } from "../src/types.js";
+import type { MetricsEmitter } from "../src/types.js";
 
 describe("BudgetExhaustedError", () => {
   it("has code BUDGET_EXHAUSTED", () => {
@@ -70,5 +71,26 @@ describe("ToolBudgetDeniedError", () => {
   it("has name ToolBudgetDeniedError", () => {
     const err = new ToolBudgetDeniedError("x");
     expect(err.name).toBe("ToolBudgetDeniedError");
+  });
+});
+
+describe("MetricsEmitter", () => {
+  it("accepts emitter without flush", () => {
+    const emitter: MetricsEmitter = {
+      gauge: () => {},
+      counter: () => {},
+      histogram: () => {},
+    };
+    expect(emitter.flush).toBeUndefined();
+  });
+
+  it("accepts emitter with flush", () => {
+    const emitter: MetricsEmitter = {
+      gauge: () => {},
+      counter: () => {},
+      histogram: () => {},
+      flush: async () => {},
+    };
+    expect(emitter.flush).toBeDefined();
   });
 });

@@ -85,6 +85,14 @@ describe("formatBudgetHint", () => {
     expect(hint).toMatch(/\.\.\.$/);
   });
 
+  it("handles very small maxPromptHintChars without negative index", () => {
+    const cfg = makeConfig({ maxPromptHintChars: 2 });
+    const snapshot = makeSnapshot({ level: "low", remaining: 5_000_000 });
+    const hint = formatBudgetHint(snapshot, cfg);
+    // Should produce "..." (3 chars) — the ellipsis itself, since slice(0, max(0, 2-3)) = slice(0, 0) = ""
+    expect(hint).toBe("...");
+  });
+
   it("includes forecast projection (Gap 9)", () => {
     const snapshot = makeSnapshot({ level: "healthy", remaining: 1_000_000 });
     const forecast = {
@@ -172,6 +180,27 @@ describe("isToolPermitted (Gap 7)", () => {
 
   it("blocklist takes precedence over allowlist", () => {
     const result = isToolPermitted("dangerous_tool", ["*"], ["dangerous_tool"]);
+    expect(result.permitted).toBe(false);
+  });
+
+  it("blocks tool matching blocklist with mid-pattern wildcard", () => {
+    const result = isToolPermitted("aws_s3_tool", undefined, ["aws_*_tool"]);
+    expect(result.permitted).toBe(false);
+  });
+
+  it("permits tool matching allowlist with mid-pattern wildcard", () => {
+    const result = isToolPermitted("aws_s3_tool", ["aws_*_tool"]);
+    expect(result.permitted).toBe(true);
+  });
+
+  it("does not match mid-pattern wildcard when segments differ", () => {
+    const result = isToolPermitted("gcp_s3_tool", ["aws_*_tool"]);
+    expect(result.permitted).toBe(false);
+    expect(result.reason).toContain("allowlist");
+  });
+
+  it("matches pattern with multiple wildcards", () => {
+    const result = isToolPermitted("a_foo_b_bar_c", undefined, ["a_*_b_*_c"]);
     expect(result.permitted).toBe(false);
   });
 });

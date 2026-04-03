@@ -126,4 +126,15 @@ describe("DryRunClient", () => {
     expect(res.body.balances[0].remaining.unit).toBe("TOKENS");
     expect(res.body.balances[0].spent.unit).toBe("TOKENS");
   });
+
+  it("generates independent reservation IDs per instance", async () => {
+    const client1 = new DryRunClient(10_000_000);
+    const client2 = new DryRunClient(10_000_000);
+
+    const r1 = await client1.createReservation({ estimate: { amount: 1_000 } });
+    const r2 = await client2.createReservation({ estimate: { amount: 1_000 } });
+
+    expect(r1.body.reservationId).toBe("dry-run-1");
+    expect(r2.body.reservationId).toBe("dry-run-1");
+  });
 });

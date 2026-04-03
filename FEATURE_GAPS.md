@@ -1,6 +1,6 @@
 # Feature Gaps — cycles-openclaw-budget-guard
 
-Analysis of 18 feature gaps identified in the v0.1.0 plugin. All gaps have been implemented in v0.2.0.
+Analysis of 18 feature gaps identified in the v0.1.0 plugin. All gaps were implemented across v0.2.0 through v0.7.9.
 
 ---
 

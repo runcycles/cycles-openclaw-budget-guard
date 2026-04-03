@@ -122,6 +122,21 @@ export default function (api: OpenClawPluginApi): void {
       );
     }
     if (
+      config.lowBudgetStrategies.includes("downgrade_model") &&
+      Object.keys(config.modelFallbacks).length > 0
+    ) {
+      for (const [model, fallbacks] of Object.entries(config.modelFallbacks)) {
+        const candidates = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
+        for (const candidate of candidates) {
+          if (!(candidate in config.modelBaseCosts)) {
+            api.logger.warn(
+              `[openclaw-budget-guard] modelFallbacks["${model}"] includes "${candidate}" which has no modelBaseCosts entry — it will use defaultModelCost (${config.defaultModelCost}), which may be higher than the original model`,
+            );
+          }
+        }
+      }
+    }
+    if (
       config.lowBudgetStrategies.includes("disable_expensive_tools") &&
       config.expensiveToolThreshold === undefined &&
       Object.keys(config.toolBaseCosts).length === 0

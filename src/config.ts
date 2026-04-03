@@ -83,6 +83,31 @@ export function resolveConfig(
     }
   }
 
+  // Validate cost values are non-negative
+  const toolBaseCosts = asNumberRecord(raw.toolBaseCosts) ?? {};
+  const modelBaseCosts = asNumberRecord(raw.modelBaseCosts) ?? {};
+  const defaultModelCost = asNumber(raw.defaultModelCost) ?? 500_000;
+
+  for (const [tool, cost] of Object.entries(toolBaseCosts)) {
+    if (cost < 0) {
+      throw new Error(
+        `[openclaw-budget-guard] toolBaseCosts["${tool}"] = ${cost} must be non-negative`,
+      );
+    }
+  }
+  for (const [model, cost] of Object.entries(modelBaseCosts)) {
+    if (cost < 0) {
+      throw new Error(
+        `[openclaw-budget-guard] modelBaseCosts["${model}"] = ${cost} must be non-negative`,
+      );
+    }
+  }
+  if (defaultModelCost < 0) {
+    throw new Error(
+      `[openclaw-budget-guard] defaultModelCost (${defaultModelCost}) must be non-negative`,
+    );
+  }
+
   return {
     enabled: asBool(raw.enabled) ?? true,
     cyclesBaseUrl,
@@ -97,15 +122,15 @@ export function resolveConfig(
     lowBudgetThreshold,
     exhaustedThreshold,
     modelFallbacks: asModelFallbacks(raw.modelFallbacks) ?? {},
-    toolBaseCosts: asNumberRecord(raw.toolBaseCosts) ?? {},
+    toolBaseCosts,
     injectPromptBudgetHint: asBool(raw.injectPromptBudgetHint) ?? true,
     maxPromptHintChars: asNumber(raw.maxPromptHintChars) ?? 200,
     failClosed: asBool(raw.failClosed) ?? true,
     logLevel: asLogLevel(raw.logLevel) ?? "info",
 
     // Gap 1: LLM call reservations
-    modelBaseCosts: asNumberRecord(raw.modelBaseCosts) ?? {},
-    defaultModelCost: asNumber(raw.defaultModelCost) ?? 500_000,
+    modelBaseCosts,
+    defaultModelCost,
     defaultModelName: asString(raw.defaultModelName),
 
     // Gap 2: Actual cost tracking
@@ -135,7 +160,7 @@ export function resolveConfig(
     toolBlocklist: asStringArray(raw.toolBlocklist),
 
     // Gap 13: Graceful degradation strategies
-    lowBudgetStrategies: asStringArray(raw.lowBudgetStrategies) ?? ["downgrade_model"],
+    lowBudgetStrategies: asValidStrategies(raw.lowBudgetStrategies) ?? ["downgrade_model"],
     maxTokensWhenLow: asNumber(raw.maxTokensWhenLow) ?? 1024,
     expensiveToolThreshold: asNumber(raw.expensiveToolThreshold),
     maxRemainingCallsWhenLow,
@@ -237,7 +262,9 @@ function asStringRecord(
   v: unknown,
 ): Record<string, string> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, string>;
+    if (Object.values(v as Record<string, unknown>).every((val) => typeof val === "string")) {
+      return v as Record<string, string>;
+    }
   }
   return undefined;
 }
@@ -246,7 +273,9 @@ function asNumberRecord(
   v: unknown,
 ): Record<string, number> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, number>;
+    if (Object.values(v as Record<string, unknown>).every((val) => typeof val === "number")) {
+      return v as Record<string, number>;
+    }
   }
   return undefined;
 }
@@ -265,10 +294,38 @@ function asNumberArray(v: unknown): number[] | undefined {
   return undefined;
 }
 
+const VALID_STRATEGIES = [
+  "downgrade_model",
+  "reduce_max_tokens",
+  "disable_expensive_tools",
+  "limit_remaining_calls",
+];
+
+function asValidStrategies(v: unknown): string[] | undefined {
+  const arr = asStringArray(v);
+  if (!arr) return undefined;
+  for (const s of arr) {
+    if (!VALID_STRATEGIES.includes(s)) {
+      throw new Error(
+        `[openclaw-budget-guard] lowBudgetStrategies contains unknown strategy "${s}" (valid: ${VALID_STRATEGIES.join(", ")})`,
+      );
+    }
+  }
+  return arr;
+}
+
 function asModelFallbacks(
   v: unknown,
 ): Record<string, string | string[]> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
+    const obj = v as Record<string, unknown>;
+    for (const [key, val] of Object.entries(obj)) {
+      if (typeof val !== "string" && !(Array.isArray(val) && val.every((item) => typeof item === "string"))) {
+        throw new Error(
+          `[openclaw-budget-guard] modelFallbacks["${key}"] must be a string or string[] — got ${typeof val}`,
+        );
+      }
+    }
     return v as Record<string, string | string[]>;
   }
   return undefined;

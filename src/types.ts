@@ -187,6 +187,7 @@ export interface MetricsEmitter {
   gauge(name: string, value: number, tags?: Record<string, string>): void;
   counter(name: string, delta: number, tags?: Record<string, string>): void;
   histogram(name: string, value: number, tags?: Record<string, string>): void;
+  flush?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +386,7 @@ export class BudgetExhaustedError extends Error {
     ].filter(Boolean).join(", ");
     super(
       `Budget exhausted (remaining: ${remaining}${scope ? `, ${scope}` : ""}). ` +
-      `Execution blocked by cycles-openclaw-budget-guard. ` +
+      `Execution blocked by openclaw-budget-guard. ` +
       `To resume, increase the budget via the Cycles API or contact your admin.`,
     );
     this.name = "BudgetExhaustedError";

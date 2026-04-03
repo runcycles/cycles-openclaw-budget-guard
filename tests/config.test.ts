@@ -408,4 +408,79 @@ describe("resolveConfig", () => {
     expect(result.enableEventLog).toBe(false);
     expect(result.exhaustionWarningThresholdMs).toBe(120_000);
   });
+
+  it("rejects toolBaseCosts with non-number values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolBaseCosts: { web_search: "not_a_number" },
+    });
+    expect(cfg.toolBaseCosts).toEqual({});
+  });
+
+  it("rejects otlpMetricsHeaders with non-string values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      otlpMetricsHeaders: { Authorization: 123 },
+    });
+    expect(cfg.otlpMetricsHeaders).toBeUndefined();
+  });
+
+  it("accepts valid toolBaseCosts with all number values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      toolBaseCosts: { web_search: 5000, code_exec: 10000 },
+    });
+    expect(cfg.toolBaseCosts).toEqual({ web_search: 5000, code_exec: 10000 });
+  });
+
+  it("throws on unknown lowBudgetStrategies value", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, lowBudgetStrategies: ["teleport_model"] }),
+    ).toThrow('unknown strategy "teleport_model"');
+  });
+
+  it("accepts all valid lowBudgetStrategies values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      lowBudgetStrategies: ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls"],
+    });
+    expect(cfg.lowBudgetStrategies).toEqual([
+      "downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls",
+    ]);
+  });
+
+  it("throws on modelFallbacks with non-string/non-array value", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, modelFallbacks: { "gpt-4o": 123 as unknown as string } }),
+    ).toThrow('modelFallbacks["gpt-4o"]');
+  });
+
+  it("accepts modelFallbacks with string and string[] values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      modelFallbacks: { "gpt-4o": "gpt-4o-mini", "claude": ["haiku", "sonnet"] },
+    });
+    expect(cfg.modelFallbacks).toEqual({
+      "gpt-4o": "gpt-4o-mini",
+      "claude": ["haiku", "sonnet"],
+    });
+  });
+
+  it("throws on negative toolBaseCosts", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, toolBaseCosts: { web_search: -100 } }),
+    ).toThrow('toolBaseCosts["web_search"] = -100 must be non-negative');
+  });
+
+  it("throws on negative modelBaseCosts", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, modelBaseCosts: { "gpt-4o": -500 } }),
+    ).toThrow('modelBaseCosts["gpt-4o"] = -500 must be non-negative');
+  });
+
+  it("throws on negative defaultModelCost", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, defaultModelCost: -1 }),
+    ).toThrow("defaultModelCost (-1) must be non-negative");
+  });
 });

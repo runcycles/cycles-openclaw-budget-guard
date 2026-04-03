@@ -65,7 +65,7 @@ export function formatBudgetHint(
 
   const hint = parts.join(" ");
   if (hint.length > config.maxPromptHintChars) {
-    return hint.slice(0, config.maxPromptHintChars - 3) + "...";
+    return hint.slice(0, Math.max(0, config.maxPromptHintChars - 3)) + "...";
   }
   return hint;
 }
@@ -97,11 +97,8 @@ export function isToolPermitted(
 
 function matchGlob(value: string, pattern: string): boolean {
   if (pattern === "*") return true;
-  if (pattern.endsWith("*")) {
-    return value.startsWith(pattern.slice(0, -1));
-  }
-  if (pattern.startsWith("*")) {
-    return value.endsWith(pattern.slice(1));
-  }
-  return value === pattern;
+  if (!pattern.includes("*")) return value === pattern;
+  const parts = pattern.split("*");
+  const regexStr = "^" + parts.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
+  return new RegExp(regexStr).test(value);
 }
