@@ -22,6 +22,7 @@ export function makeConfig(
     cyclesApiKey: "test-api-key",
     tenant: "test-tenant",
     budgetId: undefined,
+    budgetScope: undefined,
     currency: "USD_MICROCENTS",
     defaultModelActionKind: "llm.completion",
     defaultToolActionKindPrefix: "tool.",

@@ -224,7 +224,7 @@ The plugin uses a simple model: every model call and tool call reserves a fixed 
           "cyclesBaseUrl": "http://localhost:7878",
           "cyclesApiKey": "cyc_your_api_key_here",
           "tenant": "my-org",
-          "budgetId": "my-app",
+          "budgetScope": { "app": "my-app" },
           "currency": "USD_MICROCENTS",
           "lowBudgetThreshold": 10000000,
           "exhaustedThreshold": 0,
@@ -402,7 +402,8 @@ The defaults (`failClosed: true`, `lowBudgetThreshold: 10000000`) will block age
 | `cyclesBaseUrl` | string | — | Cycles server URL (required) |
 | `cyclesApiKey` | string | — | Cycles API key (required) |
 | `tenant` | string | — | Cycles tenant identifier (required) |
-| `budgetId` | string | — | App-level budget scope. See [Budget Scoping with `budgetId`](#budget-scoping-with-budgetid). |
+| `budgetScope` | object | — | Scope segments for targeting a specific budget (e.g. `{ "workspace": "road", "app": "lane" }`). See [Budget Scoping](#budget-scoping-with-budgetscope). |
+| `budgetId` | string | — | **Deprecated** — use `budgetScope` instead. Equivalent to `budgetScope: { "app": "<value>" }`. |
 | `currency` | string | `USD_MICROCENTS` | Default budget unit for all reservations |
 | `failClosed` | boolean | `true` | Block model calls when budget is exhausted or reservation is denied (`false` = warn, allow, and track cost locally). See [`failClosed` behavior](#failclosed--block-vs-allow-on-budget-denial). |
 | `logLevel` | string | `info` | `debug` / `info` / `warn` / `error` |
@@ -579,22 +580,23 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 | `onSessionEnd` | function | — | Callback with session summary at agent end |
 | `analyticsWebhookUrl` | string | — | POST webhook URL for session summary data |
 
-### Budget Scoping with `budgetId`
+### Budget Scoping with `budgetScope`
 
 By default, the plugin tracks all spend against the **tenant-level** budget. If you run multiple agents or applications under the same tenant, they share one budget pool — one agent can consume the entire budget and starve others.
 
-`budgetId` maps to the **app** scope level in the Cycles protocol. It gives each application its own isolated budget:
+`budgetScope` targets a specific budget in the Cycles scope hierarchy. It supports any combination of scope levels (`workspace`, `app`, `workflow`, `agent`, `toolset`):
 
 ```
-tenant: "my-org"           ← shared across all apps
-  app: "research-agent"    ← $5 budget (budgetId)
-  app: "coding-agent"      ← $10 budget (budgetId)
+tenant: "my-org"                        ← shared across all apps
+  workspace: "team-a"                   ← team-level isolation
+    app: "research-agent"               ← $5 budget
+    app: "coding-agent"                 ← $10 budget
 ```
 
-**Step 1: Create and fund the app-level budget in Cycles** (via the Admin API):
+**Step 1: Create and fund the budget in Cycles** (via the Admin API):
 
 ```bash
-curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org/app:research-agent&unit=USD_MICROCENTS" \
+curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org/workspace:team-a/app:research-agent&unit=USD_MICROCENTS" \
   -H "X-Cycles-API-Key: your-admin-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -604,25 +606,40 @@ curl -X POST "http://localhost:7979/v1/admin/budgets/fund?scope=tenant:my-org/ap
   }'
 ```
 
-This creates the `app:research-agent` scope under `tenant:my-org` and funds it with 500,000,000 units ($5.00). The scope is created automatically if it doesn't exist.
+This creates the scope under `tenant:my-org` and funds it with 500,000,000 units ($5.00). The scope is created automatically if it doesn't exist.
 
-**Step 2: Set `budgetId` in the plugin config:**
+**Step 2: Set `budgetScope` in the plugin config:**
 
 ```json
 {
   "tenant": "my-org",
-  "budgetId": "research-agent"
+  "budgetScope": {
+    "workspace": "team-a",
+    "app": "research-agent"
+  }
 }
 ```
 
 The plugin then:
-- Queries balances filtered to `app: "research-agent"`
-- Creates reservations scoped to `app: "research-agent"`
-- Reports spend against that app's budget, not the tenant total
+- Queries balances filtered to `workspace: "team-a", app: "research-agent"`
+- Creates reservations scoped to all specified segments
+- Reports spend against that specific budget, not the tenant total
 
-**When to use `budgetId`:**
+For simple app-only scoping, use just the `app` key:
+
+```json
+{
+  "tenant": "my-org",
+  "budgetScope": { "app": "research-agent" }
+}
+```
+
+> **Migration from `budgetId`:** `budgetId` is deprecated but still works. `"budgetId": "research-agent"` is equivalent to `"budgetScope": { "app": "research-agent" }`. If both are set, `budgetScope` takes precedence.
+
+**When to use `budgetScope`:**
 - Multiple agents under the same tenant that need isolated budgets
 - Per-project or per-team spend tracking
+- Budgets with intermediate scope levels (workspace, workflow, etc.)
 - Preventing one agent from consuming the entire tenant budget
 
 **When to skip it:**
@@ -631,16 +648,14 @@ The plugin then:
 
 **Cycles scope hierarchy and what the plugin supports:**
 
-The Cycles protocol supports a full scope hierarchy: `tenant` → `workspace` → `app` → `workflow` → `agent` → `toolset`. This plugin uses two levels:
+The Cycles protocol supports a full scope hierarchy: `tenant` → `workspace` → `app` → `workflow` → `agent` → `toolset`. The plugin supports all levels via `budgetScope`:
 
 | Cycles scope | Plugin config | Used for |
 |---|---|---|
 | `tenant` | `tenant` (required) | Top-level budget boundary |
-| `app` | `budgetId` (optional) | Per-application budget isolation |
+| `workspace`, `app`, `workflow`, `agent`, `toolset` | `budgetScope` (optional) | Budget isolation at any scope level |
 | `dimensions.user` | `userId` | Per-user spend tracking within a scope |
 | `dimensions.session` | `sessionId` | Per-session spend tracking within a scope |
-
-The `workspace`, `workflow`, `agent`, and `toolset` scope levels are part of the Cycles protocol but are not exposed in this plugin. For most OpenClaw use cases, `tenant` + `budgetId` provides sufficient isolation. If you need deeper scoping (e.g., per-workflow budgets), use the [Cycles client library](https://github.com/runcycles/cycles-client-typescript) directly.
 
 ### Budget Pools (Team Visibility)
 
@@ -648,7 +663,7 @@ The `workspace`, `workflow`, `agent`, and `toolset` scope levels are part of the
 |-------|------|---------|-------------|
 | `parentBudgetId` | string | — | Parent budget scope — when set, the team/pool balance is included in prompt hints |
 
-`parentBudgetId` is a read-only visibility feature. When set, the plugin fetches the parent scope's balance and includes it in the prompt hint (e.g., "Team pool: 50000000 remaining"). It does **not** enforce the parent budget — enforcement happens at the app level via `budgetId`.
+`parentBudgetId` is a read-only visibility feature. When set, the plugin fetches the parent scope's balance and includes it in the prompt hint (e.g., "Team pool: 50000000 remaining"). It does **not** enforce the parent budget — enforcement happens at the scoped level via `budgetScope`.
 
 ### Model Cost Reconciliation (v0.5.0)
 
@@ -894,7 +909,7 @@ Your budget has run out. To resume:
      -H "Content-Type: application/json" \
      -d '{"operation": "CREDIT", "amount": 50000000, "idempotency_key": "topup-001"}'
    ```
-   This adds 50,000,000 units ($0.50) to the budget. Adjust the `scope` to match your `tenant` (and `budgetId` if set).
+   This adds 50,000,000 units ($0.50) to the budget. Adjust the `scope` to match your `tenant` and `budgetScope`.
 
 2. **Start a new agent session** — the plugin fetches fresh budget state at the start of each session.
 
@@ -904,7 +919,7 @@ For details on budget management, see [Budget Allocation and Management](https:/
 - Set `cyclesBaseUrl` in your plugin config (use `"${CYCLES_BASE_URL}"` for env var interpolation)
 
 **Budget always shows "healthy"**
-- Verify `currency`, `tenant`, and `budgetId` match your Cycles setup
+- Verify `currency`, `tenant`, and `budgetScope` match your Cycles setup
 - Set `logLevel: "debug"` to see raw balance responses
 
 **Tools not being blocked**

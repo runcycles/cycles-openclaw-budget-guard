@@ -173,8 +173,8 @@ describe("fetchBudgetState", () => {
     expect(snapshot.level).toBe("healthy");
   });
 
-  it("passes budgetId as app param when set", async () => {
-    const cfgWithBudget = makeConfig({ budgetId: "my-app" });
+  it("passes budgetScope as params when set", async () => {
+    const cfgWithBudget = makeConfig({ budgetId: "my-app", budgetScope: { app: "my-app" } });
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
       body: {
@@ -194,6 +194,31 @@ describe("fetchBudgetState", () => {
     expect(mockGetBalances).toHaveBeenCalledWith({
       tenant: "test-tenant",
       app: "my-app",
+    });
+  });
+
+  it("passes full budgetScope including workspace in params", async () => {
+    const cfgWithScope = makeConfig({ budgetScope: { workspace: "road", app: "lane" } });
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:test-tenant/workspace:road/app:lane",
+            scopePath: "/test-tenant/road/lane",
+            remaining: { unit: "USD_MICROCENTS", amount: 10 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(cfgWithScope);
+    await fetchBudgetState(client, cfgWithScope, logger);
+
+    expect(mockGetBalances).toHaveBeenCalledWith({
+      tenant: "test-tenant",
+      workspace: "road",
+      app: "lane",
     });
   });
 
@@ -318,7 +343,7 @@ describe("fetchBudgetState", () => {
   });
 
   it("extracts pool balance when parentBudgetId is set (Gap 18)", async () => {
-    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetId: "my-app" });
+    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetScope: { app: "my-app" } });
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
       body: {
@@ -348,7 +373,7 @@ describe("fetchBudgetState", () => {
   });
 
   it("returns undefined pool balance when parentBudgetId set but no match found (Gap 18)", async () => {
-    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetId: "my-app" });
+    const cfgWithPool = makeConfig({ parentBudgetId: "team-pool", budgetScope: { app: "my-app" } });
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
       body: {
@@ -423,8 +448,8 @@ describe("reserveBudget", () => {
     });
   });
 
-  it("includes budgetId as app in subject when set", async () => {
-    const cfgWithBudget = makeConfig({ budgetId: "my-app" });
+  it("includes budgetScope in subject when set", async () => {
+    const cfgWithBudget = makeConfig({ budgetScope: { app: "my-app" } });
     mockCreateReservation.mockResolvedValue({
       isSuccess: true,
       body: { decision: "ALLOW", affectedScopes: [] },
@@ -440,6 +465,27 @@ describe("reserveBudget", () => {
     expect(mockCreateReservation).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: { tenant: "test-tenant", app: "my-app" },
+      }),
+    );
+  });
+
+  it("includes full budgetScope with workspace in subject", async () => {
+    const cfgWithScope = makeConfig({ budgetScope: { workspace: "road", app: "lane" } });
+    mockCreateReservation.mockResolvedValue({
+      isSuccess: true,
+      body: { decision: "ALLOW", affectedScopes: [] },
+    });
+
+    const client = createCyclesClient(cfgWithScope);
+    await reserveBudget(client, cfgWithScope, {
+      actionKind: "tool.x",
+      actionName: "x",
+      estimate: 100,
+    });
+
+    expect(mockCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: { tenant: "test-tenant", workspace: "road", app: "lane" },
       }),
     );
   });

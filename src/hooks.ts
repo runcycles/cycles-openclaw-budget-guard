@@ -147,7 +147,11 @@ export function initHooks(
   // v0.5.0: Set up metrics emitter
   metricsEmitter = config.metricsEmitter;
   baseTags = { tenant: config.tenant };
-  if (config.budgetId) baseTags.budgetId = config.budgetId;
+  if (config.budgetScope) {
+    for (const [key, value] of Object.entries(config.budgetScope)) {
+      baseTags[key] = value;
+    }
+  }
 
   // OpenClaw calls the plugin entrypoint (and thus initHooks) multiple times —
   // once per channel/worker. Only reset session state on the first init.
@@ -1038,6 +1042,7 @@ export async function agentEnd(
   const summary: SessionSummary = {
     tenant: config.tenant,
     budgetId: config.budgetId,
+    budgetScope: config.budgetScope,
     userId: resolvedUserId,
     sessionId: resolvedSessionId,
     remaining: snapshot.remaining,

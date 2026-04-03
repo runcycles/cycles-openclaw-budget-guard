@@ -49,14 +49,10 @@ export async function fetchBudgetState(
   logger: OpenClawLogger,
   opts?: FetchBudgetStateOptions,
 ): Promise<BudgetSnapshot> {
-  const params: Record<string, string> = { tenant: config.tenant };
-  if (config.budgetId) {
-    params.app = config.budgetId;
-  }
-  // Note: userId/sessionId are used in reservation subjects via dimensions,
-  // but getBalances only supports standard subject filters (tenant, workspace,
-  // app, workflow, agent, toolset). User/session scoping is applied at the
-  // reservation level, not the balance query level.
+  const params: Record<string, string> = {
+    tenant: config.tenant,
+    ...(config.budgetScope ?? {}),
+  };
 
   let response;
   try {
@@ -83,11 +79,11 @@ export async function fetchBudgetState(
   const match = findMatchingBalance(parsed.balances, config);
 
   if (!match) {
-    if (config.budgetId) {
+    if (config.budgetScope) {
+      const scopeStr = Object.entries(config.budgetScope).map(([k, v]) => `${k}=${v}`).join(", ");
       logger.warn(
-        `No balance found for budgetId="${config.budgetId}" (currency=${config.currency}). ` +
-        `Verify the app scope exists in Cycles and has an allocated budget. ` +
-        `Note: budgetId maps to the "app" scope — it is not the ledger_id. ` +
+        `No balance found for budgetScope {${scopeStr}} (currency=${config.currency}). ` +
+        `Verify the scope exists in Cycles and has an allocated budget. ` +
         `Falling back to healthy (remaining=Infinity).`,
       );
     } else {
@@ -139,16 +135,16 @@ function findMatchingBalance(
 
   if (matching.length === 0) return undefined;
 
-  // If budgetId is set, prefer the balance whose scope matches it
-  if (config.budgetId) {
+  // If budgetScope is set, prefer the balance whose scope/scopePath matches all segments
+  if (config.budgetScope && Object.keys(config.budgetScope).length > 0) {
+    const scopeValues = Object.values(config.budgetScope);
     const specific = matching.find(
       (b) =>
-        b.scope.includes(config.budgetId!) ||
-        b.scopePath.includes(config.budgetId!),
+        scopeValues.every((v) => b.scope.includes(v) || b.scopePath.includes(v)),
     );
     if (specific) return specific;
-    // budgetId is set but no balance matches — don't fall back to tenant balance
-    // as that would silently ignore the budgetId config
+    // budgetScope is set but no balance matches — don't fall back to tenant balance
+    // as that would silently ignore the budgetScope config
     return undefined;
   }
 
@@ -188,7 +184,7 @@ export async function reserveBudget(
     idempotency_key: randomUUID(),
     subject: {
       tenant: config.tenant,
-      ...(config.budgetId ? { app: config.budgetId } : {}),
+      ...(config.budgetScope ?? {}),
       ...(Object.keys(dimensions).length > 0 ? { dimensions } : {}),
     },
     action: { kind: opts.actionKind, name: opts.actionName },
