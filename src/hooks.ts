@@ -698,7 +698,7 @@ export async function beforePromptBuild(
   ) {
     fullHint += ` Limit responses to ${config.maxTokensWhenLow} tokens.`;
     if (fullHint.length > config.maxPromptHintChars) {
-      fullHint = fullHint.slice(0, config.maxPromptHintChars - 3) + "...";
+      fullHint = fullHint.slice(0, Math.max(0, config.maxPromptHintChars - 3)) + "...";
     }
   }
 

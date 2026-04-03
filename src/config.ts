@@ -83,6 +83,31 @@ export function resolveConfig(
     }
   }
 
+  // Validate cost values are non-negative
+  const toolBaseCosts = asNumberRecord(raw.toolBaseCosts) ?? {};
+  const modelBaseCosts = asNumberRecord(raw.modelBaseCosts) ?? {};
+  const defaultModelCost = asNumber(raw.defaultModelCost) ?? 500_000;
+
+  for (const [tool, cost] of Object.entries(toolBaseCosts)) {
+    if (cost < 0) {
+      throw new Error(
+        `[openclaw-budget-guard] toolBaseCosts["${tool}"] = ${cost} must be non-negative`,
+      );
+    }
+  }
+  for (const [model, cost] of Object.entries(modelBaseCosts)) {
+    if (cost < 0) {
+      throw new Error(
+        `[openclaw-budget-guard] modelBaseCosts["${model}"] = ${cost} must be non-negative`,
+      );
+    }
+  }
+  if (defaultModelCost < 0) {
+    throw new Error(
+      `[openclaw-budget-guard] defaultModelCost (${defaultModelCost}) must be non-negative`,
+    );
+  }
+
   return {
     enabled: asBool(raw.enabled) ?? true,
     cyclesBaseUrl,
@@ -97,15 +122,15 @@ export function resolveConfig(
     lowBudgetThreshold,
     exhaustedThreshold,
     modelFallbacks: asModelFallbacks(raw.modelFallbacks) ?? {},
-    toolBaseCosts: asNumberRecord(raw.toolBaseCosts) ?? {},
+    toolBaseCosts,
     injectPromptBudgetHint: asBool(raw.injectPromptBudgetHint) ?? true,
     maxPromptHintChars: asNumber(raw.maxPromptHintChars) ?? 200,
     failClosed: asBool(raw.failClosed) ?? true,
     logLevel: asLogLevel(raw.logLevel) ?? "info",
 
     // Gap 1: LLM call reservations
-    modelBaseCosts: asNumberRecord(raw.modelBaseCosts) ?? {},
-    defaultModelCost: asNumber(raw.defaultModelCost) ?? 500_000,
+    modelBaseCosts,
+    defaultModelCost,
     defaultModelName: asString(raw.defaultModelName),
 
     // Gap 2: Actual cost tracking

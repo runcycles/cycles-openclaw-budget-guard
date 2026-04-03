@@ -65,7 +65,7 @@ export function formatBudgetHint(
 
   const hint = parts.join(" ");
   if (hint.length > config.maxPromptHintChars) {
-    return hint.slice(0, config.maxPromptHintChars - 3) + "...";
+    return hint.slice(0, Math.max(0, config.maxPromptHintChars - 3)) + "...";
   }
   return hint;
 }

@@ -465,4 +465,22 @@ describe("resolveConfig", () => {
       "claude": ["haiku", "sonnet"],
     });
   });
+
+  it("throws on negative toolBaseCosts", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, toolBaseCosts: { web_search: -100 } }),
+    ).toThrow('toolBaseCosts["web_search"] = -100 must be non-negative');
+  });
+
+  it("throws on negative modelBaseCosts", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, modelBaseCosts: { "gpt-4o": -500 } }),
+    ).toThrow('modelBaseCosts["gpt-4o"] = -500 must be non-negative');
+  });
+
+  it("throws on negative defaultModelCost", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, defaultModelCost: -1 }),
+    ).toThrow("defaultModelCost (-1) must be non-negative");
+  });
 });

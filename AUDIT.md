@@ -49,6 +49,8 @@
 | `lowBudgetStrategies` accepts invalid names | Invalid values like `"teleport_model"` were silently ignored. Now validates against known strategies and throws on unknown values. | `src/config.ts` |
 | `asModelFallbacks` doesn't validate values | `{ "gpt-4o": 123 }` was accepted as valid. Now validates that values are `string \| string[]` and throws on invalid types. | `src/config.ts` |
 | No timeout on `fetchBudgetState` | A hung Cycles server could block hook execution indefinitely. Added 10s timeout via `Promise.race` with fail-open fallback. | `src/hooks.ts:getSnapshot` |
+| Negative cost values not validated | `toolBaseCosts`, `modelBaseCosts`, and `defaultModelCost` accepted negative values, corrupting budget tracking. Now throws on negative costs. | `src/config.ts` |
+| Truncation with small `maxPromptHintChars` | When `maxPromptHintChars < 3`, `slice(0, n - 3)` produced a negative index. Now uses `Math.max(0, n - 3)`. | `src/budget.ts`, `src/hooks.ts` |
 
 ### Startup validation
 
@@ -60,7 +62,7 @@
 
 | Metric | v0.7.9 | v0.7.10 |
 |---|---|---|
-| Test count | 314 | 337 |
+| Test count | 314 | 341 |
 | Statement coverage | 99.14% | 98.83% |
 | Branch coverage | 96.88% | 96.71% |
 | Line coverage | 100% | 99.49% |

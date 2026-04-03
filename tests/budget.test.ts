@@ -85,6 +85,14 @@ describe("formatBudgetHint", () => {
     expect(hint).toMatch(/\.\.\.$/);
   });
 
+  it("handles very small maxPromptHintChars without negative index", () => {
+    const cfg = makeConfig({ maxPromptHintChars: 2 });
+    const snapshot = makeSnapshot({ level: "low", remaining: 5_000_000 });
+    const hint = formatBudgetHint(snapshot, cfg);
+    // Should produce "..." (3 chars) — the ellipsis itself, since slice(0, max(0, 2-3)) = slice(0, 0) = ""
+    expect(hint).toBe("...");
+  });
+
   it("includes forecast projection (Gap 9)", () => {
     const snapshot = makeSnapshot({ level: "healthy", remaining: 1_000_000 });
     const forecast = {
