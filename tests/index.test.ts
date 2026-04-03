@@ -530,4 +530,35 @@ describe("plugin entrypoint", () => {
       expect.stringContaining("Cycles Budget Guard initialized"),
     );
   });
+
+  it("warns when fallback model has no modelBaseCosts entry", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      modelFallbacks: { "gpt-4o": "gpt-4o-mini" },
+      modelBaseCosts: {},
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('gpt-4o-mini" which has no modelBaseCosts entry'),
+    );
+  });
+
+  it("warns for each fallback model without modelBaseCosts", () => {
+    mockResolveConfig.mockReturnValue(makeConfig({
+      lowBudgetStrategies: ["downgrade_model"],
+      modelFallbacks: { "gpt-4o": ["gpt-4o-mini", "gpt-3.5"] },
+      modelBaseCosts: { "gpt-4o-mini": 100_000 },
+    }));
+
+    const logger = makeLogger();
+    const api = { config: {}, logger, on: vi.fn() };
+    registerPlugin(api);
+    // Should warn about gpt-3.5 but not gpt-4o-mini
+    const warnCalls = logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(warnCalls.some(msg => msg.includes("gpt-3.5"))).toBe(true);
+    expect(warnCalls.some(msg => msg.includes("gpt-4o-mini"))).toBe(false);
+  });
 });

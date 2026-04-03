@@ -432,4 +432,37 @@ describe("resolveConfig", () => {
     });
     expect(cfg.toolBaseCosts).toEqual({ web_search: 5000, code_exec: 10000 });
   });
+
+  it("throws on unknown lowBudgetStrategies value", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, lowBudgetStrategies: ["teleport_model"] }),
+    ).toThrow('unknown strategy "teleport_model"');
+  });
+
+  it("accepts all valid lowBudgetStrategies values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      lowBudgetStrategies: ["downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls"],
+    });
+    expect(cfg.lowBudgetStrategies).toEqual([
+      "downgrade_model", "reduce_max_tokens", "disable_expensive_tools", "limit_remaining_calls",
+    ]);
+  });
+
+  it("throws on modelFallbacks with non-string/non-array value", () => {
+    expect(() =>
+      resolveConfig({ ...minValid, modelFallbacks: { "gpt-4o": 123 as unknown as string } }),
+    ).toThrow('modelFallbacks["gpt-4o"]');
+  });
+
+  it("accepts modelFallbacks with string and string[] values", () => {
+    const cfg = resolveConfig({
+      ...minValid,
+      modelFallbacks: { "gpt-4o": "gpt-4o-mini", "claude": ["haiku", "sonnet"] },
+    });
+    expect(cfg.modelFallbacks).toEqual({
+      "gpt-4o": "gpt-4o-mini",
+      "claude": ["haiku", "sonnet"],
+    });
+  });
 });

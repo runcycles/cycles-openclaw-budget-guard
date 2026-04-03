@@ -27,7 +27,7 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, and DryRunClient ID isolation.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies and fallbacks, and error prefix consistency.
 
 ---
 
@@ -39,19 +39,31 @@
 |---|---|---|
 | `matchGlob` only supports prefix/suffix wildcards | Patterns like `aws_*_tool` did not match `aws_s3_tool`. Rewrote to convert glob patterns to regex, supporting `*` anywhere in the pattern. | `src/budget.ts:matchGlob` |
 | Module-level `nextId` in DryRunClient | Counter was shared across all DryRunClient instances. Moved to instance field so each client has independent IDs. | `src/dry-run.ts` |
-| Event log O(n) `shift()` for eviction | `eventLog.shift()` is O(n) on a 10,000-element array. Changed to drop new entries when cap is reached. | `src/hooks.ts:logEvent` |
+| Event log O(n) `shift()` for eviction | `eventLog.shift()` is O(n) on a 10,000-element array. Changed to drop new entries when cap is reached. Logs a warning on first drop. | `src/hooks.ts:logEvent` |
 | `asStringRecord`/`asNumberRecord` skip value validation | Cast objects without checking individual values were the correct type. Added `.every()` checks matching the pattern used by `asStringArray`/`asNumberArray`. | `src/config.ts` |
 | `fireWebhook` has no timeout | Webhook fetch calls had no timeout, risking indefinitely held connections. Added `AbortSignal.timeout(10_000)`. | `src/hooks.ts:fireWebhook` |
 | OTLP metrics not flushed at `agentEnd` | Buffered metrics could be lost on process exit. Added optional `flush?()` to `MetricsEmitter` interface and call it at end of `agentEnd`. | `src/types.ts`, `src/hooks.ts:agentEnd` |
+| Model reservation not released on commit failure | `agentEnd` called `commitPendingModelReservation()` without try-catch. If commit failed, the reservation stayed locked until TTL. Now catches and releases. | `src/hooks.ts:agentEnd` |
+| `costEstimator`/`modelCostEstimator` null return not handled | If either returned `null` (not `undefined`), null was assigned as the actual cost. Now uses `!= null` check to reject both null and undefined. | `src/hooks.ts` |
+| Inconsistent error prefix in `BudgetExhaustedError` | Message said `"cycles-openclaw-budget-guard"` while all other strings use `"openclaw-budget-guard"`. Fixed to be consistent. | `src/types.ts` |
+| `lowBudgetStrategies` accepts invalid names | Invalid values like `"teleport_model"` were silently ignored. Now validates against known strategies and throws on unknown values. | `src/config.ts` |
+| `asModelFallbacks` doesn't validate values | `{ "gpt-4o": 123 }` was accepted as valid. Now validates that values are `string \| string[]` and throws on invalid types. | `src/config.ts` |
+| No timeout on `fetchBudgetState` | A hung Cycles server could block hook execution indefinitely. Added 10s timeout via `Promise.race` with fail-open fallback. | `src/hooks.ts:getSnapshot` |
+
+### Startup validation
+
+| Warning | Trigger |
+|---|---|
+| Fallback model has no `modelBaseCosts` entry | `modelFallbacks` includes a model not in `modelBaseCosts` — it defaults to `defaultModelCost` which may be higher than the original |
 
 ### Test coverage
 
 | Metric | v0.7.9 | v0.7.10 |
 |---|---|---|
-| Test count | 314 | 328 |
-| Statement coverage | 99.14% | 99.15% |
-| Branch coverage | 96.88% | 96.90% |
-| Line coverage | 100% | 100% |
+| Test count | 314 | 337 |
+| Statement coverage | 99.14% | 98.83% |
+| Branch coverage | 96.88% | 96.71% |
+| Line coverage | 100% | 99.49% |
 
 ---
 

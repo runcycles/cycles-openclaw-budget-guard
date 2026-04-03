@@ -114,6 +114,7 @@ let windowCostAtStart = 0;
 let windowStartedAt = 0;
 let lastBurnRate = 0;
 let exhaustionWarningFired = false;
+let eventLogCapWarned = false;
 
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,7 @@ export function initHooks(
   windowStartedAt = Date.now();
   lastBurnRate = 0;
   exhaustionWarningFired = false;
+  eventLogCapWarned = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +203,23 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
   }
   const userId = (ctx?.metadata?.userId as string | undefined) ?? resolvedUserId;
   const sessionId = (ctx?.metadata?.sessionId as string | undefined) ?? resolvedSessionId;
-  cachedSnapshot = await fetchBudgetState(client, config, logger, { userId, sessionId });
+
+  // Timeout guard: don't let a hung Cycles server block hook execution
+  const SNAPSHOT_TIMEOUT_MS = 10_000;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    cachedSnapshot = await Promise.race([
+      fetchBudgetState(client, config, logger, { userId, sessionId }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error("fetchBudgetState timed out")), SNAPSHOT_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    logger.warn(`Budget snapshot fetch failed (${err}), assuming healthy`);
+    cachedSnapshot = { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
   cachedSnapshotAt = now;
 
   // Gap 5: Detect budget level transitions
@@ -311,7 +329,13 @@ const MAX_EVENT_LOG_ENTRIES = 10_000;
 /** v0.6.0: Append to event log if enabled. Capped to prevent unbounded growth. */
 function logEvent(entry: ReservationLogEntry): void {
   if (!config.enableEventLog) return;
-  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) return;
+  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) {
+    if (!eventLogCapWarned) {
+      eventLogCapWarned = true;
+      logger.warn(`Event log capacity (${MAX_EVENT_LOG_ENTRIES} entries) reached — further events will be dropped`);
+    }
+    return;
+  }
   eventLog.push(entry);
 }
 
@@ -435,7 +459,7 @@ async function commitPendingModelReservation(): Promise<void> {
         estimatedCost: reservation.estimate,
         turnIndex: turnIndex - 1,
       });
-      if (computed !== undefined) actual = computed;
+      if (computed != null) actual = computed;
     } catch (err) {
       logger.warn(`modelCostEstimator threw for model=${modelName}, using estimate:`, err);
     }
@@ -913,7 +937,7 @@ export async function afterToolCall(
         durationMs: event.durationMs,
         result: event.result,
       });
-      if (computed !== undefined) actual = computed;
+      if (computed != null) actual = computed;
     } catch (err) {
       logger.warn(`costEstimator threw for tool=${reservation.toolName}, using estimate:`, err);
     }
@@ -953,8 +977,17 @@ export async function agentEnd(
   _event: AgentEndEvent,
   ctx: HookContext,
 ): Promise<void> {
-  // v0.5.0: Commit any pending model reservation from the last turn
-  await commitPendingModelReservation();
+  // v0.5.0: Commit any pending model reservation from the last turn.
+  // If commit fails, release the reservation so budget isn't locked until TTL.
+  if (pendingModelReservation) {
+    const resId = pendingModelReservation.reservationId;
+    try {
+      await commitPendingModelReservation();
+    } catch (err) {
+      logger.warn(`Failed to commit pending model reservation ${resId} at agent_end, releasing:`, err);
+      await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+    }
+  }
 
   // v0.6.0: Stop all heartbeat timers
   for (const timer of heartbeatTimers.values()) clearInterval(timer);

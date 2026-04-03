@@ -2972,3 +2972,93 @@ describe("v0.7.10 — metrics flush at agentEnd", () => {
     await expect(agentEnd({}, makeHookContext())).resolves.not.toThrow();
   });
 });
+
+describe("v0.7.10 — model reservation release on commit failure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+    mockReleaseReservation.mockResolvedValue(undefined);
+  });
+
+  it("releases model reservation when commit fails at agentEnd", async () => {
+    setup();
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    // Reserve succeeds, but commit will fail
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-r1", affectedScopes: [] });
+    mockCommitUsage
+      .mockRejectedValueOnce(new Error("commit failed")) // first commit in agentEnd fails
+      .mockResolvedValue(undefined); // subsequent commits ok
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    // Now there's a pending model reservation — agentEnd should try to commit, fail, then release
+    await agentEnd({}, makeHookContext());
+
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-r1",
+      "commit_failed_at_agent_end",
+      expect.anything(),
+    );
+  });
+});
+
+describe("v0.7.10 — costEstimator null handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  it("ignores null return from costEstimator and uses estimate", async () => {
+    setup({
+      costEstimator: () => null as unknown as number,
+      toolBaseCosts: { web_search: 200_000 },
+    });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+    await afterToolCall({ toolName: "web_search", toolCallId: "tc1" }, makeHookContext());
+
+    // Should commit with the original estimate (200_000), not null
+    expect(mockCommitUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "r1",
+      200_000,
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+});
+
+describe("v0.7.10 — getSnapshot timeout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockCommitUsage.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("falls back to healthy on fetchBudgetState timeout", async () => {
+    setup();
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r1", affectedScopes: [] });
+    // fetchBudgetState never resolves
+    mockFetchBudgetState.mockImplementation(() => new Promise(() => {}));
+
+    const promise = beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    // Advance past the 10s timeout
+    await vi.advanceTimersByTimeAsync(11_000);
+    const result = await promise;
+
+    // Should succeed (not throw), treating budget as healthy
+    // Model was not downgraded since budget is "healthy"
+    expect(result).toBeUndefined();
+  });
+});
+

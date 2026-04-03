@@ -135,7 +135,7 @@ export function resolveConfig(
     toolBlocklist: asStringArray(raw.toolBlocklist),
 
     // Gap 13: Graceful degradation strategies
-    lowBudgetStrategies: asStringArray(raw.lowBudgetStrategies) ?? ["downgrade_model"],
+    lowBudgetStrategies: asValidStrategies(raw.lowBudgetStrategies) ?? ["downgrade_model"],
     maxTokensWhenLow: asNumber(raw.maxTokensWhenLow) ?? 1024,
     expensiveToolThreshold: asNumber(raw.expensiveToolThreshold),
     maxRemainingCallsWhenLow,
@@ -269,10 +269,38 @@ function asNumberArray(v: unknown): number[] | undefined {
   return undefined;
 }
 
+const VALID_STRATEGIES = [
+  "downgrade_model",
+  "reduce_max_tokens",
+  "disable_expensive_tools",
+  "limit_remaining_calls",
+];
+
+function asValidStrategies(v: unknown): string[] | undefined {
+  const arr = asStringArray(v);
+  if (!arr) return undefined;
+  for (const s of arr) {
+    if (!VALID_STRATEGIES.includes(s)) {
+      throw new Error(
+        `[openclaw-budget-guard] lowBudgetStrategies contains unknown strategy "${s}" (valid: ${VALID_STRATEGIES.join(", ")})`,
+      );
+    }
+  }
+  return arr;
+}
+
 function asModelFallbacks(
   v: unknown,
 ): Record<string, string | string[]> | undefined {
   if (v && typeof v === "object" && !Array.isArray(v)) {
+    const obj = v as Record<string, unknown>;
+    for (const [key, val] of Object.entries(obj)) {
+      if (typeof val !== "string" && !(Array.isArray(val) && val.every((item) => typeof item === "string"))) {
+        throw new Error(
+          `[openclaw-budget-guard] modelFallbacks["${key}"] must be a string or string[] — got ${typeof val}`,
+        );
+      }
+    }
     return v as Record<string, string | string[]>;
   }
   return undefined;

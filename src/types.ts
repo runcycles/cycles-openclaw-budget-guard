@@ -386,7 +386,7 @@ export class BudgetExhaustedError extends Error {
     ].filter(Boolean).join(", ");
     super(
       `Budget exhausted (remaining: ${remaining}${scope ? `, ${scope}` : ""}). ` +
-      `Execution blocked by cycles-openclaw-budget-guard. ` +
+      `Execution blocked by openclaw-budget-guard. ` +
       `To resume, increase the budget via the Cycles API or contact your admin.`,
     );
     this.name = "BudgetExhaustedError";
