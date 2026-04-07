@@ -340,8 +340,73 @@ describe("fetchBudgetState", () => {
     expect(snapshot.level).toBe("healthy");
   });
 
+  it("prefers tenant-level balance when no budgetScope is configured (#76)", async () => {
+    // Bug: when only tenant is configured, findMatchingBalance was picking
+    // the deepest child scope (longest scopePath) instead of tenant-level
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:rider/workspace:road/app:lane",
+            scopePath: "/rider/road/lane",
+            remaining: { unit: "USD_MICROCENTS", amount: 1_000 },
+            allocated: { unit: "USD_MICROCENTS", amount: 5_000 },
+          },
+          {
+            scope: "tenant:rider",
+            scopePath: "/rider",
+            remaining: { unit: "USD_MICROCENTS", amount: 50_000_000 },
+            allocated: { unit: "USD_MICROCENTS", amount: 100_000_000 },
+          },
+        ],
+      },
+    });
+
+    // config has no budgetScope — only tenant
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    // Should use tenant-level balance, not the child scope
+    expect(snapshot.remaining).toBe(50_000_000);
+    expect(snapshot.allocated).toBe(100_000_000);
+    expect(snapshot.level).toBe("healthy");
+  });
+
+  it("prefers tenant-level balance regardless of balance array order (#76)", async () => {
+    // Ensure sort works even when tenant balance comes first in the array
+    mockGetBalances.mockResolvedValue({
+      isSuccess: true,
+      body: {
+        balances: [
+          {
+            scope: "tenant:rider",
+            scopePath: "/rider",
+            remaining: { unit: "USD_MICROCENTS", amount: 50_000_000 },
+          },
+          {
+            scope: "tenant:rider/workspace:road",
+            scopePath: "/rider/road",
+            remaining: { unit: "USD_MICROCENTS", amount: 2_000 },
+          },
+          {
+            scope: "tenant:rider/workspace:road/app:lane",
+            scopePath: "/rider/road/lane",
+            remaining: { unit: "USD_MICROCENTS", amount: 500 },
+          },
+        ],
+      },
+    });
+
+    const client = createCyclesClient(config);
+    const snapshot = await fetchBudgetState(client, config, logger);
+
+    expect(snapshot.remaining).toBe(50_000_000);
+  });
+
   it("prefers balance with budgetId in scope", async () => {
-    const cfgWithBudget = makeConfig({ budgetId: "my-app" });
+    // resolveConfig converts budgetId to budgetScope: { app: budgetId }
+    const cfgWithBudget = makeConfig({ budgetId: "my-app", budgetScope: { app: "my-app" } });
     mockGetBalances.mockResolvedValue({
       isSuccess: true,
       body: {

@@ -75,7 +75,7 @@ export async function fetchBudgetState(
     response.body as Record<string, unknown>,
   );
 
-  // Find the most specific matching balance in the configured currency
+  // Find the matching balance in the configured currency
   const match = findMatchingBalance(parsed.balances, config);
 
   if (!match) {
@@ -149,8 +149,9 @@ function findMatchingBalance(
     return undefined;
   }
 
-  // Return the most specific (longest scopePath) balance
-  return matching.sort((a, b) => b.scopePath.length - a.scopePath.length)[0];
+  // No budgetScope configured — return the least specific (shortest scopePath)
+  // balance, which corresponds to the tenant-level budget the user configured.
+  return matching.sort((a, b) => a.scopePath.length - b.scopePath.length)[0];
 }
 
 // ---------------------------------------------------------------------------
