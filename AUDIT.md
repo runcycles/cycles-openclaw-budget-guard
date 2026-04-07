@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
-**Date:** 2026-04-03
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.1
+**Date:** 2026-04-07
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.2
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.2.0
 
@@ -27,7 +27,27 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case. v0.8.0 adds `budgetScope` for full scope hierarchy targeting. v0.8.1 fixes case-insensitive scope matching. v0.8.2 fixes tenant-only config checking wrong budget scope (#76).
+
+---
+
+## v0.8.2 Changes (2026-04-07)
+
+### Bug fix
+
+| Fix | Description | Location |
+|---|---|---|
+| Tenant-only config checks wrong budget scope | When no `budgetScope` is configured (tenant-only), `findMatchingBalance` sorted by longest `scopePath` and returned the deepest child budget instead of the tenant-level one. Budget checks, low-budget warnings, and exhausted strategies all evaluated the wrong scope. Reservations/commits were unaffected (they use `budgetScope` directly). Fixed by sorting by shortest `scopePath` when no `budgetScope` is set. Fixes #76. | `src/cycles.ts:findMatchingBalance` |
+| Test fix: `budgetId` test missing `budgetScope` | The "prefers balance with budgetId in scope" test set `budgetId` without `budgetScope`, which doesn't match `resolveConfig` behavior (it converts `budgetId` to `budgetScope: { app: budgetId }`). Added matching `budgetScope` to the test config. | `tests/cycles.test.ts` |
+
+### Test coverage
+
+| Metric | v0.8.1 | v0.8.2 |
+|---|---|---|
+| Test count | 350 | 352 |
+| Statement coverage | 98.99% | 98.99% |
+| Branch coverage | 96.69% | 96.69% |
+| Line coverage | 99.51% | 99.51% |
 
 ---
 
