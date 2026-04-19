@@ -2913,9 +2913,11 @@ describe("v0.7.10 — webhook timeout", () => {
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "low", remaining: 5_000_000 }));
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
-    // Webhook must have been called with AbortSignal
+    // Webhook must have been called with AbortSignal. Match the exact
+    // configured URL rather than a substring — substring matching on URLs
+    // is a CodeQL/lint anti-pattern even in tests.
     const webhookCall = mockFetch.mock.calls.find(
-      (c) => typeof c[0] === "string" && c[0].includes("example.com"),
+      (c) => c[0] === "https://example.com/hook",
     );
     expect(webhookCall).toBeDefined();
     expect(webhookCall![1]).toHaveProperty("signal");
