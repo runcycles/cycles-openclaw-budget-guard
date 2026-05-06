@@ -96,6 +96,8 @@ export function makeConfig(
     enableEventLog: false,
     exhaustionWarningThresholdMs: 120_000,
     onExhaustionForecast: undefined,
+    // v0.8.3
+    failClosedOnSnapshotError: false,
     ...overrides,
   };
 }

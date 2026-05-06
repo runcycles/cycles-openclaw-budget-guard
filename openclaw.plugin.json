@@ -1,7 +1,7 @@
 {
   "id": "openclaw-budget-guard",
   "name": "Cycles OpenClaw Budget Guard",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "OpenClaw plugin for budget-aware model and tool execution using Cycles.",
   "extensions": ["./dist/index.js"],
   "configSchema": {
@@ -280,6 +280,11 @@
         "type": "number",
         "default": 120000,
         "description": "Fire exhaustion forecast warning when estimated time-to-exhaustion drops below this threshold (milliseconds)."
+      },
+      "failClosedOnSnapshotError": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, treats an unreachable Cycles control plane as exhausted instead of fail-open healthy. Combined with failClosed=true this prevents a network partition from lifting budget caps."
       }
     },
     "required": []

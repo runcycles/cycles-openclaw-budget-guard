@@ -219,8 +219,13 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
       }),
     ]);
   } catch (err) {
-    logger.warn(`Budget snapshot fetch failed (${err}), assuming healthy`);
-    cachedSnapshot = { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+    if (config.failClosedOnSnapshotError) {
+      logger.warn(`Budget snapshot fetch failed (${err}), failing closed (exhausted)`);
+      cachedSnapshot = { remaining: 0, reserved: 0, spent: 0, level: "exhausted" };
+    } else {
+      logger.warn(`Budget snapshot fetch failed (${err}), assuming healthy`);
+      cachedSnapshot = { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+    }
   } finally {
     clearTimeout(timeoutHandle);
   }

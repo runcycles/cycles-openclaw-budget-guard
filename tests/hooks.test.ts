@@ -1927,6 +1927,41 @@ describe("snapshot cache hit", () => {
   });
 });
 
+describe("failClosedOnSnapshotError (v0.8.3)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("treats snapshot timeout as exhausted when failClosedOnSnapshotError=true", async () => {
+    const { logger } = setup({ failClosedOnSnapshotError: true, failClosed: true });
+    // Simulate fetchBudgetState rejecting (e.g., timeout).
+    mockFetchBudgetState.mockRejectedValueOnce(new Error("fetchBudgetState timed out"));
+    mockIsAllowed.mockReturnValue(false);
+    mockReserveBudget.mockResolvedValue({ decision: "DENY", affectedScopes: [], reasonCode: "x" });
+
+    const result = await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    // failClosed + exhausted snapshot → blocks
+    expect(result).toEqual({ modelOverride: "__cycles_budget_exhausted__" });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("failing closed"),
+    );
+  });
+
+  it("falls back to fail-open healthy when failClosedOnSnapshotError=false", async () => {
+    const { logger } = setup({ failClosedOnSnapshotError: false });
+    mockFetchBudgetState.mockRejectedValueOnce(new Error("fetchBudgetState timed out"));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "r-1", affectedScopes: [] });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("assuming healthy"),
+    );
+  });
+});
+
 describe("onSessionEnd error handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();

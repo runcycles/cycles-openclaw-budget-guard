@@ -90,6 +90,8 @@ export default function (api: OpenClawPluginApi): void {
   if (!startupBannerShown) {
     startupBannerShown = true;
 
+    // Show last 4 chars so operators can verify the right key is loaded
+    // without leaking enough material to be useful to an attacker.
     const maskedKey = config.cyclesApiKey
       ? `****${config.cyclesApiKey.slice(-4)}`
       : "(not set)";

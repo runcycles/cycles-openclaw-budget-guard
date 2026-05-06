@@ -117,6 +117,12 @@ export interface BudgetGuardConfig {
   // v0.6.0 — Predictive exhaustion warning
   exhaustionWarningThresholdMs: number;
   onExhaustionForecast?: (event: ExhaustionForecastEvent) => void;
+
+  // v0.8.3 — Fail-closed on snapshot fetch failure.
+  // When true, an unreachable Cycles control plane is treated as `exhausted`
+  // instead of fail-open `healthy`/Infinity. Combined with `failClosed` this
+  // closes the bypass where a network partition silently lifts budget caps.
+  failClosedOnSnapshotError: boolean;
 }
 
 // ---------------------------------------------------------------------------
