@@ -508,4 +508,100 @@ describe("resolveConfig", () => {
     expect(cfg.budgetScope).toBeUndefined();
     expect(cfg.budgetId).toBeUndefined();
   });
+
+  // v0.8.3 — new validations
+  describe("v0.8.3 hardening", () => {
+    it("defaults failClosedOnSnapshotError to false (back-compat)", () => {
+      const cfg = resolveConfig(minValid);
+      expect(cfg.failClosedOnSnapshotError).toBe(false);
+    });
+
+    it("accepts failClosedOnSnapshotError=true", () => {
+      const cfg = resolveConfig({ ...minValid, failClosedOnSnapshotError: true });
+      expect(cfg.failClosedOnSnapshotError).toBe(true);
+    });
+
+    it("rejects non-http(s) webhook URLs", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, analyticsWebhookUrl: "javascript:alert(1)" }),
+      ).toThrow(/analyticsWebhookUrl must use http or https/);
+      expect(() =>
+        resolveConfig({ ...minValid, budgetTransitionWebhookUrl: "file:///etc/passwd" }),
+      ).toThrow(/budgetTransitionWebhookUrl must use http or https/);
+    });
+
+    it("rejects malformed webhook URLs", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, analyticsWebhookUrl: "not a url" }),
+      ).toThrow(/analyticsWebhookUrl is not a valid URL/);
+    });
+
+    it("rejects non-http(s) OTLP endpoint", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, otlpMetricsEndpoint: "ftp://example.com/m" }),
+      ).toThrow(/otlpMetricsEndpoint must use http or https/);
+    });
+
+    it("accepts http and https webhook URLs", () => {
+      const cfg = resolveConfig({
+        ...minValid,
+        analyticsWebhookUrl: "https://hooks.example.com/x",
+        budgetTransitionWebhookUrl: "http://localhost:9000/x",
+      });
+      expect(cfg.analyticsWebhookUrl).toBe("https://hooks.example.com/x");
+      expect(cfg.budgetTransitionWebhookUrl).toBe("http://localhost:9000/x");
+    });
+
+    it("rejects reservationTtlMs above 1h cap", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, reservationTtlMs: 60 * 60 * 1000 + 1 }),
+      ).toThrow(/reservationTtlMs/);
+    });
+
+    it("rejects negative reservationTtlMs", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, reservationTtlMs: -1 }),
+      ).toThrow(/reservationTtlMs/);
+    });
+
+    it("rejects retryDelayMs above 60s cap", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, retryDelayMs: 120_000 }),
+      ).toThrow(/retryDelayMs/);
+    });
+
+    it("rejects maxRetries above 10", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, maxRetries: 100 }),
+      ).toThrow(/maxRetries/);
+    });
+
+    it("rejects non-integer maxRetries", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, maxRetries: 1.5 }),
+      ).toThrow(/maxRetries/);
+    });
+
+    it("rejects transientRetryMaxAttempts above 10", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, transientRetryMaxAttempts: 50 }),
+      ).toThrow(/transientRetryMaxAttempts/);
+    });
+
+    it("rejects heartbeatIntervalMs above 1h cap", () => {
+      expect(() =>
+        resolveConfig({ ...minValid, heartbeatIntervalMs: 60 * 60 * 1000 + 1 }),
+      ).toThrow(/heartbeatIntervalMs/);
+    });
+
+    it("accepts heartbeatIntervalMs=0 to disable heartbeat", () => {
+      const cfg = resolveConfig({ ...minValid, heartbeatIntervalMs: 0 });
+      expect(cfg.heartbeatIntervalMs).toBe(0);
+    });
+
+    it("accepts maxRetries=0 to disable retries", () => {
+      const cfg = resolveConfig({ ...minValid, maxRetries: 0 });
+      expect(cfg.maxRetries).toBe(0);
+    });
+  });
 });

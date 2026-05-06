@@ -136,6 +136,36 @@ describe("fetchBudgetState", () => {
     );
   });
 
+  // v0.8.3: fail-closed snapshot
+  it("returns fail-closed (exhausted) snapshot on network exception when failClosedOnSnapshotError=true", async () => {
+    mockGetBalances.mockRejectedValue(new Error("DNS resolution failed"));
+    const failClosedConfig = makeConfig({ failClosedOnSnapshotError: true });
+
+    const client = createCyclesClient(failClosedConfig);
+    const snapshot = await fetchBudgetState(client, failClosedConfig, logger);
+
+    expect(snapshot.remaining).toBe(0);
+    expect(snapshot.level).toBe("exhausted");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("network error"),
+    );
+  });
+
+  it("returns fail-closed snapshot on API error when failClosedOnSnapshotError=true", async () => {
+    mockGetBalances.mockResolvedValue({
+      isSuccess: false,
+      status: 500,
+      errorMessage: "boom",
+    });
+    const failClosedConfig = makeConfig({ failClosedOnSnapshotError: true });
+
+    const client = createCyclesClient(failClosedConfig);
+    const snapshot = await fetchBudgetState(client, failClosedConfig, logger);
+
+    expect(snapshot.remaining).toBe(0);
+    expect(snapshot.level).toBe("exhausted");
+  });
+
   it("returns fail-open snapshot when no matching balance", async () => {
     mockGetBalances.mockResolvedValue({
       isSuccess: true,

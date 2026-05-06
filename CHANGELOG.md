@@ -20,6 +20,28 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
+## [0.8.3] — 2026-05-06
+
+### Added
+
+- `failClosedOnSnapshotError` config (default `false`). When `true`, an
+  unreachable Cycles control plane is treated as `exhausted` instead of
+  fail-open `healthy`/Infinity. Combined with `failClosed=true`, this closes
+  the bypass where a network partition silently lifted budget caps.
+- `AbortSignal.timeout(10s)` on the OTLP metrics flush so a hung collector
+  can no longer dangle the connection until process exit.
+
+### Changed
+
+- Webhook URL validation at config load: `analyticsWebhookUrl`,
+  `budgetTransitionWebhookUrl`, and `otlpMetricsEndpoint` must parse cleanly
+  and use `http`/`https`. Non-`http(s)` schemes (`javascript:`, `file:`,
+  `data:`) and malformed URLs are rejected with a clear error.
+- Sanity bounds on timing knobs: `reservationTtlMs` (≤1h), `retryDelayMs`
+  (≤60s), `maxRetries` (0–10, integer), `transientRetryMaxAttempts` (0–10,
+  integer), `transientRetryBaseDelayMs` (≤60s), `heartbeatIntervalMs` (≤1h).
+  Stops a config typo from locking budget for hours.
+
 ## [0.8.2] — 2026-04-07
 
 ### Fixed

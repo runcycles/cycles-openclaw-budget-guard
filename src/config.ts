@@ -108,6 +108,28 @@ export function resolveConfig(
     );
   }
 
+  // v0.8.3: Validate webhook URLs at config load. Reject anything that isn't
+  // http(s); this stops javascript:/file:/data: scheme misuse and gives
+  // operators an early, loud error rather than a silent webhook drop later.
+  validateWebhookUrl(asString(raw.budgetTransitionWebhookUrl), "budgetTransitionWebhookUrl");
+  validateWebhookUrl(asString(raw.analyticsWebhookUrl), "analyticsWebhookUrl");
+  validateWebhookUrl(asString(raw.otlpMetricsEndpoint), "otlpMetricsEndpoint");
+
+  // v0.8.3: Sanity-cap timing knobs so a typo can't lock budget for hours.
+  // Operators with legitimate need to exceed these can patch and rebuild.
+  const reservationTtlMs = asNumber(raw.reservationTtlMs) ?? 60_000;
+  validateMsBound("reservationTtlMs", reservationTtlMs, 0, 60 * 60 * 1000);
+  const retryDelayMs = asNumber(raw.retryDelayMs) ?? 2_000;
+  validateMsBound("retryDelayMs", retryDelayMs, 0, 60_000);
+  const maxRetries = asNumber(raw.maxRetries) ?? 1;
+  validateIntBound("maxRetries", maxRetries, 0, 10);
+  const transientRetryMaxAttempts = asNumber(raw.transientRetryMaxAttempts) ?? 2;
+  validateIntBound("transientRetryMaxAttempts", transientRetryMaxAttempts, 0, 10);
+  const transientRetryBaseDelayMs = asNumber(raw.transientRetryBaseDelayMs) ?? 500;
+  validateMsBound("transientRetryBaseDelayMs", transientRetryBaseDelayMs, 0, 60_000);
+  const heartbeatIntervalMs = asNumber(raw.heartbeatIntervalMs) ?? 30_000;
+  validateMsBound("heartbeatIntervalMs", heartbeatIntervalMs, 0, 60 * 60 * 1000);
+
   // v0.8.0: Resolve budgetScope — budgetId is backward-compatible sugar
   const rawBudgetScope = asStringRecord(raw.budgetScope);
   const rawBudgetId = asString(raw.budgetId);
@@ -161,7 +183,7 @@ export function resolveConfig(
     sessionId: asString(raw.sessionId),
 
     // Gap 8: Configurable reservation TTL
-    reservationTtlMs: asNumber(raw.reservationTtlMs) ?? 60_000,
+    reservationTtlMs,
     toolReservationTtls: asNumberRecord(raw.toolReservationTtls),
 
     // Gap 11: Configurable snapshot cache TTL
@@ -187,8 +209,8 @@ export function resolveConfig(
 
     // Gap 17: Retry on denied tool calls
     retryOnDeny: asBool(raw.retryOnDeny) ?? false,
-    retryDelayMs: asNumber(raw.retryDelayMs) ?? 2_000,
-    maxRetries: asNumber(raw.maxRetries) ?? 1,
+    retryDelayMs,
+    maxRetries,
 
     // Gap 10: Dry-run mode
     dryRun: asBool(raw.dryRun) ?? false,
@@ -222,12 +244,12 @@ export function resolveConfig(
     otlpMetricsHeaders: asStringRecord(raw.otlpMetricsHeaders),
 
     // v0.6.0: Reservation heartbeat
-    heartbeatIntervalMs: asNumber(raw.heartbeatIntervalMs) ?? 30_000,
+    heartbeatIntervalMs,
 
     // v0.6.0: Retryable error handling
     retryableStatusCodes: asNumberArray(raw.retryableStatusCodes) ?? [429, 503, 504],
-    transientRetryMaxAttempts: asNumber(raw.transientRetryMaxAttempts) ?? 2,
-    transientRetryBaseDelayMs: asNumber(raw.transientRetryBaseDelayMs) ?? 500,
+    transientRetryMaxAttempts,
+    transientRetryBaseDelayMs,
 
     // v0.6.0: Burn rate anomaly detection
     burnRateWindowMs: asNumber(raw.burnRateWindowMs) ?? 60_000,
@@ -240,6 +262,9 @@ export function resolveConfig(
     // v0.6.0: Predictive exhaustion warning
     exhaustionWarningThresholdMs: asNumber(raw.exhaustionWarningThresholdMs) ?? 120_000,
     onExhaustionForecast: asFunction(raw.onExhaustionForecast) as BudgetGuardConfig["onExhaustionForecast"],
+
+    // v0.8.3: Fail-closed when the Cycles control plane is unreachable.
+    failClosedOnSnapshotError: asBool(raw.failClosedOnSnapshotError) ?? false,
   };
 }
 
@@ -332,6 +357,51 @@ function asValidStrategies(v: unknown): string[] | undefined {
     }
   }
   return arr;
+}
+
+function validateMsBound(field: string, value: number, min: number, max: number): void {
+  if (value < min || value > max) {
+    throw new Error(
+      `[openclaw-budget-guard] ${field} (${value}ms) must be between ${min}ms and ${max}ms`,
+    );
+  }
+}
+
+function validateIntBound(field: string, value: number, min: number, max: number): void {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(
+      `[openclaw-budget-guard] ${field} (${value}) must be an integer between ${min} and ${max}`,
+    );
+  }
+}
+
+/**
+ * v0.8.3: Validate a webhook URL.
+ *
+ * Throws on hard errors (non-string, parse failure, scheme other than http/https).
+ * The session payload includes tenant/userId/sessionId/cost data, so allowing
+ * arbitrary schemes (file:, javascript:, data:) or leaving validation to
+ * `fetch()` would expand the SSRF/exfil surface.
+ *
+ * Operators who legitimately need to POST to a private/link-local target
+ * (localhost dev collector, in-cluster service) can still do so — this only
+ * rejects the obvious foot-guns.
+ */
+export function validateWebhookUrl(url: string | undefined, fieldName: string): void {
+  if (url === undefined) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(
+      `[openclaw-budget-guard] ${fieldName} is not a valid URL: ${url}`,
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `[openclaw-budget-guard] ${fieldName} must use http or https (got "${parsed.protocol}")`,
+    );
+  }
 }
 
 function asModelFallbacks(

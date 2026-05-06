@@ -116,6 +116,15 @@ describe("createOtlpEmitter", () => {
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
+  it("attaches an AbortSignal to bound the request (v0.8.3)", async () => {
+    const emitter = createOtlpEmitter({ endpoint: "http://localhost:4318/v1/metrics" });
+    emitter.gauge("timeout.test", 1);
+    await emitter.flush();
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.signal).toBeDefined();
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("encodes histogram metrics as gauge data points", async () => {
     const emitter = createOtlpEmitter({ endpoint: "http://localhost:4318/v1/metrics" });
     emitter.histogram("latency", 250, { endpoint: "/api" });

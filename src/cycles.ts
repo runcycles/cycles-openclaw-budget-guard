@@ -54,21 +54,26 @@ export async function fetchBudgetState(
     ...(config.budgetScope ?? {}),
   };
 
+  // v0.8.3: When `failClosedOnSnapshotError` is true, treat an unreachable
+  // Cycles control plane as exhausted rather than fail-open. Pairs with
+  // `failClosed` to prevent a network partition from lifting budget caps.
+  const errorSnapshot: BudgetSnapshot = config.failClosedOnSnapshotError
+    ? { remaining: 0, reserved: 0, spent: 0, level: "exhausted" }
+    : { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+
   let response;
   try {
     response = await client.getBalances(params);
   } catch (err) {
     logger.warn(`Failed to fetch balances (network error): ${err}`);
-    // Fail-open: assume healthy so we don't block on transient errors
-    return { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+    return errorSnapshot;
   }
 
   if (!response.isSuccess) {
     logger.warn(
       `Failed to fetch balances (status ${response.status}): ${response.errorMessage ?? "unknown"}`,
     );
-    // Fail-open for balance fetch: assume healthy so we don't block on transient errors
-    return { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+    return errorSnapshot;
   }
 
   const parsed = balanceResponseFromWire(

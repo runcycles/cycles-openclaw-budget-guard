@@ -1,9 +1,9 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
-**Date:** 2026-04-07
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.2
+**Date:** 2026-05-06
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.3
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
-**Cycles client:** `runcycles` ^0.2.0
+**Cycles client:** `runcycles` ^0.3.0
 
 ---
 
@@ -27,7 +27,35 @@
 | Published Package Contents (`files` field) | — | 0 |
 | Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case. v0.8.0 adds `budgetScope` for full scope hierarchy targeting. v0.8.1 fixes case-insensitive scope matching. v0.8.2 fixes tenant-only config checking wrong budget scope (#76).
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case. v0.8.0 adds `budgetScope` for full scope hierarchy targeting. v0.8.1 fixes case-insensitive scope matching. v0.8.2 fixes tenant-only config checking wrong budget scope (#76). v0.8.3 hardens against snapshot-fetch-bypass, webhook SSRF, OTLP collector hangs, and TTL/retry typos; adds `failClosedOnSnapshotError`, URL validation, OTLP request timeout, and TTL/retry bounds.
+
+---
+
+## v0.8.3 Changes (2026-05-06)
+
+### Security & quality hardening
+
+| Fix | Description | Location |
+|---|---|---|
+| Fail-closed snapshot mode | New `failClosedOnSnapshotError` config (default `false`). When `true`, an unreachable Cycles control plane is treated as `exhausted` instead of fail-open `healthy`/Infinity. Combined with `failClosed=true`, this closes the bypass where a network partition silently lifted budget caps. | `src/cycles.ts:fetchBudgetState`, `src/hooks.ts:getSnapshot`, `src/config.ts`, `src/types.ts` |
+| Webhook URL validation | `analyticsWebhookUrl`, `budgetTransitionWebhookUrl`, and `otlpMetricsEndpoint` are validated at config load. Non-`http(s)` schemes (`javascript:`, `file:`, `data:`) and malformed URLs are rejected with a clear error, reducing SSRF/exfil risk via a tampered config. | `src/config.ts:validateWebhookUrl` |
+| OTLP fetch timeout | `AbortSignal.timeout(10_000)` added to the OTLP metrics flush so a hung collector can no longer dangle the connection until process exit. | `src/metrics-otlp.ts` |
+| Sanity bounds on TTL/retry knobs | New validation rejects out-of-range `reservationTtlMs` (>1h), `retryDelayMs` (>60s), `maxRetries` (>10 or non-integer), `transientRetryMaxAttempts` (>10), `transientRetryBaseDelayMs` (>60s), and `heartbeatIntervalMs` (>1h). Stops a config typo from locking budget for hours. | `src/config.ts:validateMsBound`, `validateIntBound` |
+
+### Test coverage
+
+| Metric | v0.8.2 | v0.8.3 |
+|---|---|---|
+| Test count | 352 | 372 |
+| Statement coverage | 98.99% | 99.02% |
+| Branch coverage | 96.69% | 96.78% |
+| Line coverage | 99.51% | 99.53% |
+
+### Notes
+
+- New config field `failClosedOnSnapshotError` is opt-in (defaults to `false`), so v0.8.2 deployments upgrade with no behavior change unless they enable it.
+- Webhook URL validation is **strict** — operators currently using non-`http(s)` URLs will see a config-load error on upgrade. None are valid in practice; this is intentional.
+- TTL/retry caps are generous (1h max for TTLs, 10 max for retry counts). Operators who legitimately need higher values must patch and rebuild — this is intentional.
 
 ---
 

@@ -43,6 +43,8 @@ export function createOtlpEmitter(opts: OtlpEmitterOptions): MetricsEmitter & { 
           ...opts.headers,
         },
         body: JSON.stringify(payload),
+        // v0.8.3: bound the request so a hung collector can't dangle forever.
+        signal: AbortSignal.timeout(10_000),
       });
     } catch {
       // Best-effort — metrics loss is acceptable
