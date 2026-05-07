@@ -20,6 +20,14 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
+## [0.8.4] — 2026-05-07
+
+npm metadata refresh for category-search discovery. **No code changes** — bundle and runtime behavior are identical to 0.8.3.
+
+### Changed
+
+- `package.json`: rewrote `description` to lead with the cost / action / audit pillars (*"Runtime budget, action, and audit authority for OpenClaw agents — enforce LLM cost limits, tool call caps, and audit trails before execution."*) and added a 23-keyword field. Previously the package shipped with **no `keywords` field at all**, which limited npm-search surfacing. Keywords cover the three pillars (cost / risk / audit) plus framework targeting (`openclaw`, `openclaw-plugin`, `mcp`, `claude`, `anthropic`, `openai`).
+
 ## [0.8.3] — 2026-05-06
 
 ### Added

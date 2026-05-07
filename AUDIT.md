@@ -784,3 +784,14 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 ## Verdict
 
 The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
+
+---
+
+## 0.8.4 — npm Metadata Refresh (2026-05-07)
+
+**Files:** `package.json`. **No code changes.** Bundle, runtime behavior, protocol conformance, and test coverage are identical to 0.8.3.
+
+- **Description rewritten** to lead with the cost / action / audit pillars: *"Runtime budget, action, and audit authority for OpenClaw agents — enforce LLM cost limits, tool call caps, and audit trails before execution."*
+- **Keywords added** (none existed before this release). 23 keywords covering the three pillars (cost / risk / audit), runtime authority, framework targeting (`openclaw`, `mcp`, `claude`, `anthropic`, `openai`), and brand.
+
+Driven by package-portfolio SEO diagnostic: this package shipped with zero npm `keywords`, which materially limited npm-search surfacing despite the highest unique-installer velocity in the org. Companion fixes for other client packages tracked in their respective repos.
