@@ -1,4 +1,4 @@
-# cycles-openclaw-budget-guard
+# Cycles Budget Guard for OpenClaw — AI agent runtime control plugin
 
 [![CI](https://github.com/runcycles/cycles-openclaw-budget-guard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runcycles/cycles-openclaw-budget-guard/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@runcycles/openclaw-budget-guard)](https://www.npmjs.com/package/@runcycles/openclaw-budget-guard)
@@ -7,7 +7,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/runcycles/cycles-openclaw-budget-guard/actions)
 
-OpenClaw plugin for budget-aware model and tool execution using [Cycles](https://github.com/runcycles).
+**OpenClaw plugin for AI agent runtime control — enforce LLM cost limits, tool call caps, action permissions, and audit trails on OpenClaw agents before execution.** Drops in as `openclaw plugins install @runcycles/openclaw-budget-guard`. No agent code changes for typical setups. Powered by [Cycles](https://github.com/runcycles).
 
 ## Why use this plugin?
 
