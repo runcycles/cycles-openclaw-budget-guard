@@ -12,13 +12,18 @@ set -e
 
 GLOBAL_SETTINGS="$HOME/.claude/settings.json"
 
-if ! [ -f "$GLOBAL_SETTINGS" ] || ! grep -q "mcp__github__push_files" "$GLOBAL_SETTINGS" 2>/dev/null; then
-  mkdir -p "$HOME/.claude"
+# The previous version of this block only ran the merge when push_files was
+# missing, which silently left the policy incomplete if push_files happened to
+# exist while one of the other two rules had been removed. The python3 merge
+# is idempotent (skips rules already present), so we now always run it on
+# session start to guarantee all three deny rules are in place.
+# Tracked org-wide at runcycles/.github#63.
+mkdir -p "$HOME/.claude"
 
-  if [ -f "$GLOBAL_SETTINGS" ]; then
-    TMP_SETTINGS=$(mktemp)
-    if command -v python3 &>/dev/null; then
-      python3 -c "
+if [ -f "$GLOBAL_SETTINGS" ]; then
+  TMP_SETTINGS=$(mktemp)
+  if command -v python3 &>/dev/null; then
+    python3 -c "
 import json
 with open('$GLOBAL_SETTINGS') as f:
     settings = json.load(f)
@@ -37,11 +42,11 @@ with open('$TMP_SETTINGS', 'w') as f:
     json.dump(settings, f, indent=2)
     f.write('\n')
 " && mv "$TMP_SETTINGS" "$GLOBAL_SETTINGS"
-    else
-      rm -f "$TMP_SETTINGS"
-    fi
   else
-    cat > "$GLOBAL_SETTINGS" << 'EOF'
+    rm -f "$TMP_SETTINGS"
+  fi
+else
+  cat > "$GLOBAL_SETTINGS" << 'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
@@ -53,10 +58,19 @@ with open('$TMP_SETTINGS', 'w') as f:
   }
 }
 EOF
-  fi
 fi
 
 # --- Part 2: Fix git remote URLs to use local proxy ---
+# NOTE: This block intentionally rewrites the `origin` remote on EVERY sibling
+# repo under /home/user/* with a github.com remote, not just this one. Claude
+# Code remote sessions clone multiple repos and all need the local git proxy.
+# To opt out (e.g., when running outside that environment, or when you want
+# unrelated checkouts left alone), set CYCLES_CLAUDE_SKIP_REMOTE_REWRITE=1.
+# Tracked org-wide at runcycles/.github#63.
+if [ -n "$CYCLES_CLAUDE_SKIP_REMOTE_REWRITE" ]; then
+  exit 0
+fi
+
 # Some sessions clone repos via github.com directly, which lacks push credentials.
 # If the local git proxy is running, rewrite remote URLs to use it.
 
