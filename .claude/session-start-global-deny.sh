@@ -62,12 +62,14 @@ fi
 
 # --- Part 2: Fix git remote URLs to use local proxy ---
 # NOTE: This block intentionally rewrites the `origin` remote on EVERY sibling
-# repo under /home/user/* with a github.com remote, not just this one. Claude
-# Code remote sessions clone multiple repos and all need the local git proxy.
-# To opt out (e.g., when running outside that environment, or when you want
-# unrelated checkouts left alone), set CYCLES_CLAUDE_SKIP_REMOTE_REWRITE=1.
-# Tracked org-wide at runcycles/.github#63.
-if [ -n "$CYCLES_CLAUDE_SKIP_REMOTE_REWRITE" ]; then
+# repo under /home/user/* with a github.com remote. That multi-repo scope is
+# only meaningful inside Claude Code's remote sessions (which clone many repos
+# and need them all on the local git proxy). To keep the default safe on
+# vanilla developer machines, we gate on $http_proxy being set — the Claude
+# Code remote env sets that, a vanilla dev machine does not.
+# Explicit override: set CYCLES_CLAUDE_SKIP_REMOTE_REWRITE=1 to skip even when
+# $http_proxy is set. Tracked org-wide at runcycles/.github#63.
+if [ -z "$http_proxy" ] || [ -n "$CYCLES_CLAUDE_SKIP_REMOTE_REWRITE" ]; then
   exit 0
 fi
 
