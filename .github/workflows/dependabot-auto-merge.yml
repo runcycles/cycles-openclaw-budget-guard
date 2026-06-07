@@ -1,0 +1,30 @@
+name: Dependabot auto-merge
+
+on: pull_request
+
+# Default to read-all at top level; the automerge job below escalates only the
+# narrow scopes it actually needs. Per OpenSSF Scorecard's Token-Permissions
+# criterion: avoid blanket write at the workflow level.
+permissions: read-all
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      contents: write          # required to enable auto-merge
+      pull-requests: write     # required to mark the PR as auto-merge
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+      - name: Enable auto-merge for patch updates
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          # AUTOMERGE_PAT (repo+workflow scope) lets auto-merge work on PRs that
+          # touch .github/workflows/** (e.g. github-actions bumps); the default
+          # GITHUB_TOKEN is forbidden by GitHub from doing so. Falls back to
+          # GITHUB_TOKEN when the secret is absent (unchanged behavior).
+          GH_TOKEN: ${{ secrets.AUTOMERGE_PAT || secrets.GITHUB_TOKEN }}
