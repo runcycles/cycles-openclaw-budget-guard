@@ -67,7 +67,7 @@
     "runcycles": "^0.3.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.2",
