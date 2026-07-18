@@ -40,8 +40,9 @@
 | Registration-scoped runtime | Each plugin entrypoint call now registers closures over a dedicated client, config, logger, metrics emitter, dry-run store, and session map. A later tenant/worker registration cannot redirect an in-flight session to another runtime. | `src/hooks.ts:createHooks`, `src/index.ts` |
 | Session-scoped lifecycle state | Replaced process-global reservation, pending-model, cost, cache, limit, event-log, forecast, and heartbeat state with `SessionState` entries keyed by the OpenClaw hook scope. Identity preference is `sessionId` → `sessionKey`/`conversationId` → `runId` → configured `sessionId` → `agentId` → `userId` → documented tenant fallback. | `src/hooks.ts:SessionState`, `resolveScope`, `getSessionState` |
 | Pending model isolation | Each session/run now owns its own pending model reservation and model name, so an interleaved model call in session B cannot replace or commit session A's hold. | `src/hooks.ts:commitPendingModelReservation`, `beforeModelResolve`, `beforePromptBuild`, `agentEnd` |
-| Observable commit outcomes | `commitUsage` now returns success/failure. Failed tool commits retain the hold for `agent_end`; failed final model commits are released; the next model reservation is not attempted until the prior model hold commits. | `src/cycles.ts:commitUsage`, `src/hooks.ts:commitPendingModelReservationFor`, `afterToolCallFor` |
+| Observable, fail-open commit outcomes | `commitUsage` now returns success/failure. Failed tool commits retain the hold for `agent_end`; pending model commit failures no longer reject pre-model hooks; the next model call is costed locally without creating a second hold; failed final model commits are released. | `src/cycles.ts:commitUsage`, `src/hooks.ts:commitPendingModelReservationFor`, `beforeModelResolveFor`, `beforePromptBuildFor`, `afterToolCallFor` |
 | Reservation and heartbeat cleanup | Tool reservations and heartbeat timers are looked up within the invoking session. Both successful and failed commits stop only that call's timer; `agent_end` stops only that session's timers, releases only its orphaned holds, and removes its state in a `finally` block on every error path. | `src/hooks.ts:startHeartbeatFor`, `stopHeartbeat`, `stopAllHeartbeats`, `afterToolCallFor`, `agentEndFor` |
+| Terminal state fencing | `after_tool_call` uses lookup-only state and no-ops when the scope is absent or already entering `agent_end`. Late/duplicate deliveries cannot resurrect deleted entries, grow the session map, or race a terminal release with a commit. | `src/hooks.ts:findSessionStateFor`, `SessionState.ending`, `afterToolCallFor`, `agentEndFor` |
 | Host hook context contract | Hook context types now include OpenClaw's direct `sessionId`, `sessionKey`, `runId`, `agentId`, and model fields while retaining legacy `metadata` compatibility. | `src/types.ts:HookContext` |
 
 ### Regression coverage
@@ -58,17 +59,21 @@
   cross tenant/runtime boundaries.
 - Added production-realistic non-success tests for tool and model commits,
   including the invariant that a failed pending model commit cannot create a
-  second hold. Public package API shape is unchanged; no migration is required.
-  Hosts that omit every session/run identifier receive documented best-effort
-  isolation only within a registration.
+  second hold. Model resolve and prompt-build tests assert these failures remain
+  non-throwing and that unreserved model cost is accounted locally.
+- Added terminal-delivery tests proving concurrent, late, and duplicate
+  `after_tool_call` events neither commit a releasing hold nor resurrect session
+  state after `agent_end`. Public package API shape is unchanged; no migration
+  is required. Hosts that omit every session/run identifier receive documented
+  best-effort isolation only within a registration.
 
 | Metric | Result |
 |---|---:|
-| Test count | 377 passing |
-| Statement coverage | 98.49% |
-| Branch coverage | 96.06% |
-| Function coverage | 99.34% |
-| Line coverage | 99.13% |
+| Test count | 380 passing |
+| Statement coverage | 98.23% |
+| Branch coverage | 95.64% |
+| Function coverage | 99.35% |
+| Line coverage | 98.83% |
 
 ---
 
@@ -702,9 +707,11 @@ one pending-model slot allowed session B to overwrite session A's hold.
 (client, config, logger, metrics, dry-run store, and session map). Every
 lifecycle value lives in `SessionState`, keyed by OpenClaw's session/run identity
 inside that runtime. Commit helpers expose non-success outcomes so failed tool
-holds remain releasable, failed final model holds are released, and a new model
-hold cannot be created while the previous commit is unresolved. Interleaved
-session and registration tests include colliding IDs and heartbeat ownership.
+holds remain releasable, transient model failures stay fail-open without a
+second hold, and failed final model holds are released. Lookup-only terminal
+access and an `ending` fence prevent late hooks from resurrecting state or
+racing cleanup. Interleaved session and registration tests include colliding
+IDs, terminal delivery, and heartbeat ownership.
 
 ### Issues Accepted (No Fix Needed)
 
@@ -832,7 +839,7 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 62 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and reviewed for correctness. The current suite passes 377 tests with 98.49% statement, 96.06% branch, 99.34% function, and 99.13% line coverage. Ten code issues were identified and fixed, including runcycles spec inconsistencies, network error handling gaps, and concurrent-session/runtime state isolation; four were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 62 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and reviewed for correctness. The current suite passes 380 tests with 98.23% statement, 95.64% branch, 99.35% function, and 98.83% line coverage. Ten code issues were identified and fixed, including runcycles spec inconsistencies, network error handling gaps, and concurrent-session/runtime state isolation; four were reviewed and accepted as reasonable design choices.
 
 ---
 

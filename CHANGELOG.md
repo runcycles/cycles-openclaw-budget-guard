@@ -29,9 +29,14 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
   totals, caches, call limits, event logs, forecasts, or heartbeat timers.
 - Made reservation commit outcomes explicit internally. Failed tool commits
   retain their hold for session cleanup, failed final model commits are
-  released, and a new model hold is never created before the prior hold commits.
-  Heartbeats stop on successful commits, failed commits, release cleanup, and
-  all `agent_end` error paths. No public package API migration is required.
+  released, and transient model commit failures no longer reject pre-model
+  hooks. The next model call proceeds fail-open with local cost accounting but
+  without creating a second hold. Heartbeats stop on successful commits, failed
+  commits, release cleanup, and all `agent_end` error paths.
+- Prevented late or duplicate `after_tool_call` delivery from recreating state
+  after `agent_end`. Terminal hooks now use lookup-only state and ignore a
+  session as soon as its cleanup begins, avoiding post-run map growth and
+  commit/release races. No public package API migration is required.
 
 ## [0.8.4] — 2026-05-07
 

@@ -850,10 +850,10 @@ describe("commitUsage", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("does not throw on API error", async () => {
+  it("returns false without throwing on a transient 503", async () => {
     mockCommitReservation.mockResolvedValue({
       isSuccess: false,
-      status: 500,
+      status: 503,
     });
 
     const client = createCyclesClient(makeConfig());

@@ -53,6 +53,7 @@ import {
   createHooks,
   initHooks,
   _resetInitialized,
+  _getDefaultSessionStateCount,
   beforeModelResolve,
   beforePromptBuild,
   beforeToolCall,
@@ -3315,7 +3316,8 @@ describe("v0.7.10 — model reservation release on commit failure", () => {
   });
 
   it("does not create a second model hold when the pending commit fails", async () => {
-    setup({ aggressiveCacheInvalidation: false });
+    const modelCostEstimator = vi.fn(() => undefined);
+    setup({ aggressiveCacheInvalidation: false, modelCostEstimator });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
     mockIsAllowed.mockReturnValue(true);
     mockReserveBudget.mockResolvedValue({
@@ -3324,21 +3326,112 @@ describe("v0.7.10 — model reservation release on commit failure", () => {
       affectedScopes: [],
     });
 
-    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    const ctx = makeHookContext();
+    await beforeModelResolve({ model: "gpt-4o" }, ctx);
     mockCommitUsage.mockResolvedValue(false);
 
     await expect(
-      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
-    ).rejects.toThrow("Failed to commit model reservation model-r1");
+      beforeModelResolve({ model: "gpt-4o" }, ctx),
+    ).resolves.toBeUndefined();
     expect(mockReserveBudget).toHaveBeenCalledTimes(1);
 
-    await agentEnd({}, makeHookContext());
+    await agentEnd({}, ctx);
     expect(mockReleaseReservation).toHaveBeenCalledWith(
       expect.anything(),
       "model-r1",
       "commit_failed_at_agent_end",
       expect.anything(),
     );
+    const summary = ctx.metadata!["openclaw-budget-guard"] as Record<string, unknown>;
+    expect(summary.costBreakdown).toEqual({
+      "model:gpt-4o": { count: 1, totalCost: 500_000 },
+    });
+    expect(modelCostEstimator.mock.calls.every(([call]) => call.turnIndex === 0)).toBe(true);
+  });
+
+  it("continues prompt construction when a pending model commit is deferred", async () => {
+    setup({ aggressiveCacheInvalidation: false, injectPromptBudgetHint: true });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({
+      decision: "ALLOW",
+      reservationId: "model-r1",
+      affectedScopes: [],
+    });
+
+    const ctx = makeHookContext();
+    await beforeModelResolve({ model: "gpt-4o" }, ctx);
+    mockCommitUsage.mockResolvedValue(false);
+
+    await expect(beforePromptBuild({}, ctx)).resolves.toEqual({
+      prependSystemContext: expect.any(String),
+    });
+    await agentEnd({}, ctx);
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-r1",
+      "commit_failed_at_agent_end",
+      expect.anything(),
+    );
+  });
+});
+
+describe("terminal session state cleanup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCommitUsage.mockResolvedValue(true);
+    mockReleaseReservation.mockResolvedValue(undefined);
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+    mockReserveBudget.mockResolvedValue({
+      decision: "ALLOW",
+      reservationId: "tool-r1",
+      affectedScopes: [],
+    });
+  });
+
+  it("does not resurrect state for late or duplicate after_tool_call events", async () => {
+    setup({ heartbeatIntervalMs: 0, toolBaseCosts: { tool: 100 } });
+    const ctx = { sessionId: "ended-session", metadata: {} };
+
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    expect(_getDefaultSessionStateCount()).toBe(1);
+    await agentEnd({}, ctx);
+    expect(_getDefaultSessionStateCount()).toBe(0);
+
+    mockCommitUsage.mockClear();
+    await afterToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    for (let i = 0; i < 50; i++) {
+      await afterToolCall(
+        { toolName: "tool", toolCallId: `late-${i}` },
+        { sessionId: `ended-session-${i}`, metadata: {} },
+      );
+    }
+
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+    expect(_getDefaultSessionStateCount()).toBe(0);
+  });
+
+  it("ignores after_tool_call while agent_end is releasing the session", async () => {
+    setup({ heartbeatIntervalMs: 0, toolBaseCosts: { tool: 100 } });
+    const ctx = { sessionId: "ending-session", metadata: {} };
+    let finishRelease!: () => void;
+    mockReleaseReservation.mockImplementation(
+      () => new Promise<void>((resolve) => { finishRelease = resolve; }),
+    );
+
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    const endPromise = agentEnd({}, ctx);
+    await vi.waitFor(() => expect(mockReleaseReservation).toHaveBeenCalled());
+
+    mockCommitUsage.mockClear();
+    await afterToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    expect(mockCommitUsage).not.toHaveBeenCalled();
+
+    finishRelease();
+    await endPromise;
+    expect(_getDefaultSessionStateCount()).toBe(0);
   });
 });
 

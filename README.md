@@ -922,10 +922,13 @@ Separately from `failClosed`, the plugin handles **network/transient errors** wi
 Note: commit failures are still fail-open even with this flag. A successful
 reservation is only a hold; it is not recorded as spend until commit succeeds.
 If a tool commit fails, its heartbeat stops and the hold remains owned by that
-session for release during `agent_end`. A final model commit failure is released
-immediately during `agent_end`. If the control plane is also unavailable for the
-release, the server-side TTL is the final cleanup mechanism and the actual spend
-may remain unreported.
+session for release during `agent_end`. A pending model commit failure never
+rejects `before_model_resolve` or `before_prompt_build`: the hold is retained for
+retry, prompt construction continues, and any subsequent model call proceeds
+without creating a second hold while its estimated cost is tracked locally. A
+final model commit failure is released during `agent_end`. If the control plane
+is also unavailable for the release, the server-side TTL is the final cleanup
+mechanism and the actual spend may remain unreported.
 
 ## Troubleshooting
 

@@ -71,6 +71,7 @@ interface SessionState {
   /** One pending model hold per isolated session/run. */
   pendingModelReservation?: ActiveReservation;
   pendingModelName?: string;
+  pendingModelTurnIndex?: number;
   turnIndex: number;
   heartbeatTimers: Map<string, ReturnType<typeof setInterval>>;
   eventLog: ReservationLogEntry[];
@@ -79,7 +80,11 @@ interface SessionState {
   lastBurnRate: number;
   exhaustionWarningFired: boolean;
   eventLogCapWarned: boolean;
+  /** Set as soon as agent_end starts so concurrent terminal hooks no-op. */
+  ending: boolean;
 }
+
+type PendingModelCommitOutcome = "none" | "committed" | "deferred";
 
 interface HookRuntime {
   client: CyclesClient;
@@ -179,6 +184,11 @@ export function _resetInitialized(): void {
   if (defaultRuntime) disposeRuntime(defaultRuntime);
   defaultRuntime = undefined;
   defaultHandlers = undefined;
+}
+
+/** @internal Return the legacy runtime's live state count (for testing only). */
+export function _getDefaultSessionStateCount(): number {
+  return defaultRuntime?.sessionStates.size ?? 0;
 }
 
 export function initHooks(
@@ -288,6 +298,7 @@ function createSessionState(
     lastBurnRate: 0,
     exhaustionWarningFired: false,
     eventLogCapWarned: false,
+    ending: false,
   };
 }
 
@@ -306,6 +317,15 @@ function getSessionStateFor(
     state.resolvedSessionId = identity.sessionId ?? state.resolvedSessionId;
   }
   return { key: identity.key, state };
+}
+
+function findSessionStateFor(
+  runtime: HookRuntime,
+  event: Record<string, unknown>,
+  ctx: HookContext,
+): { key: string; state?: SessionState } {
+  const identity = resolveScope(runtime, event, ctx);
+  return { key: identity.key, state: runtime.sessionStates.get(identity.key) };
 }
 
 async function getSnapshotFor(runtime: HookRuntime, state: SessionState): Promise<BudgetSnapshot> {
@@ -588,7 +608,7 @@ function stopAllHeartbeats(state: SessionState): void {
 async function commitPendingModelReservationFor(
   runtime: HookRuntime,
   state: SessionState,
-): Promise<void> {
+): Promise<PendingModelCommitOutcome> {
   const { client, config, logger } = runtime;
   const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
     emitCounterFor(runtime, name, delta, tags);
@@ -596,17 +616,18 @@ async function commitPendingModelReservationFor(
     emitHistogramFor(runtime, name, value, tags);
   const logEventForRuntime = (entry: ReservationLogEntry) => logEventFor(runtime, state, entry);
   const getSnapshotForRuntime = () => getSnapshotFor(runtime, state);
-  if (!state.pendingModelReservation) return;
+  if (!state.pendingModelReservation) return "none";
 
   const reservation = state.pendingModelReservation;
   const modelName = state.pendingModelName ?? "unknown";
+  const modelTurnIndex = state.pendingModelTurnIndex ?? state.turnIndex - 1;
   let actual = reservation.estimate;
   if (config.modelCostEstimator) {
     try {
       const computed = config.modelCostEstimator({
         model: modelName,
         estimatedCost: reservation.estimate,
-        turnIndex: state.turnIndex - 1,
+        turnIndex: modelTurnIndex,
       });
       if (computed != null) actual = computed;
     } catch (err) {
@@ -625,10 +646,14 @@ async function commitPendingModelReservationFor(
     metrics,
   );
   if (committed === false) {
-    throw new Error(`Failed to commit model reservation ${reservation.reservationId}`);
+    logger.warn(
+      `Model commit deferred for ${modelName}; retaining reservation ${reservation.reservationId} for retry or agent_end cleanup`,
+    );
+    return "deferred";
   }
   state.pendingModelReservation = undefined;
   state.pendingModelName = undefined;
+  state.pendingModelTurnIndex = undefined;
   logger.info(`Model committed: ${modelName} (cost=${actual} ${unit})`);
 
   trackCost(state, `model:${modelName}`, actual);
@@ -643,6 +668,7 @@ async function commitPendingModelReservationFor(
   if (config.aggressiveCacheInvalidation) {
     await getSnapshotForRuntime();
   }
+  return "committed";
 }
 
 const DEFAULT_TOOL_COST = 100_000;
@@ -671,7 +697,7 @@ async function beforeModelResolveFor(
   // Never create a new hold until the previous model hold for this session has
   // been finalized. A failed commit remains attached to this session so
   // agent_end can release it rather than orphaning either reservation.
-  await commitPendingModelReservationFor(runtime, state);
+  const pendingCommitOutcome = await commitPendingModelReservationFor(runtime, state);
   const snapshot = await getSnapshotFor(runtime, state);
 
   // Resolve model name — check event fields, ctx.metadata, and config fallback.
@@ -757,29 +783,13 @@ async function beforeModelResolveFor(
   const modelCurrency = config.modelCurrency ?? config.currency;
   const actionKind = config.defaultModelActionKind;
 
-  const result = await reserveBudget(client, config, {
-    actionKind,
-    actionName: resolvedModel,
-    estimate: modelCost,
-    unit: modelCurrency,
-    userId: state.resolvedUserId,
-    sessionId: state.resolvedSessionId,
-  });
-
-  if (!isAllowed(result.decision)) {
-    const reason = result.reasonCode ?? "denied";
-    emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
-    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-
-    if (config.failClosed) {
-      logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — blocking model call (failClosed=true)`);
-      return { modelOverride: "__cycles_budget_exhausted__" };
-    }
-    logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue (failClosed=false)`);
-
-    // Track cost locally even though no server-side reservation was created.
-    // The model call will proceed, so the session summary and forecasting
-    // should reflect the estimated cost.
+  if (pendingCommitOutcome === "deferred") {
+    // Connectivity failures are fail-open, but the prior hold must not be
+    // overwritten. Allow this call without a second server-side reservation
+    // and account for its estimate locally until the session ends.
+    logger.warn(
+      `Allowing model ${resolvedModel} without a new reservation because the previous model commit is deferred`,
+    );
     trackCost(state, `model:${resolvedModel}`, modelCost);
     state.totalModelCost += modelCost;
     state.totalModelCalls++;
@@ -788,44 +798,81 @@ async function beforeModelResolveFor(
       state.remainingCallsAllowed--;
     }
     invalidateSnapshotCache(state);
-
-    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: "ALLOW", reason: "pending_commit_deferred:allowed_without_reservation", budgetLevel: snapshot.level, remaining: snapshot.remaining });
     checkBurnRate(state, snapshot.remaining);
     checkExhaustionForecast(state, snapshot.remaining);
   } else {
-    state.totalReservationsMade++;
-    emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
-    logger.info(`Model reserved: ${resolvedModel} (estimate=${modelCost}, remaining=${snapshot.remaining})`);
+    const result = await reserveBudget(client, config, {
+      actionKind,
+      actionName: resolvedModel,
+      estimate: modelCost,
+      unit: modelCurrency,
+      userId: state.resolvedUserId,
+      sessionId: state.resolvedSessionId,
+    });
 
-    if (result.reservationId) {
-      // v0.5.0: Reserve-then-commit pattern — hold the reservation open.
-      // It will be committed in the next beforePromptBuild or at agentEnd,
-      // allowing modelCostEstimator to reconcile the cost.
-      state.pendingModelReservation = {
-        reservationId: result.reservationId,
-        estimate: modelCost,
-        toolName: resolvedModel,
-        createdAt: Date.now(),
-        kind: "model",
-        currency: modelCurrency,
-      };
-      state.pendingModelName = resolvedModel;
-    } else {
-      // No reservation ID (e.g. dry-run with DENY) — track immediately
+    if (!isAllowed(result.decision)) {
+      const reason = result.reasonCode ?? "denied";
+      emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
+      logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+
+      if (config.failClosed) {
+        logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — blocking model call (failClosed=true)`);
+        return { modelOverride: "__cycles_budget_exhausted__" };
+      }
+      logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — allowing execution to continue (failClosed=false)`);
+
+      // Track cost locally even though no server-side reservation was created.
+      // The model call will proceed, so the session summary and forecasting
+      // should reflect the estimated cost.
       trackCost(state, `model:${resolvedModel}`, modelCost);
       state.totalModelCost += modelCost;
       state.totalModelCalls++;
-    }
+      state.turnIndex++;
+      if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+        state.remainingCallsAllowed--;
+      }
+      invalidateSnapshotCache(state);
 
-    state.turnIndex++;
-    if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
-      state.remainingCallsAllowed--;
-    }
-    invalidateSnapshotCache(state);
+      logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      checkBurnRate(state, snapshot.remaining);
+      checkExhaustionForecast(state, snapshot.remaining);
+    } else {
+      state.totalReservationsMade++;
+      emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
+      logger.info(`Model reserved: ${resolvedModel} (estimate=${modelCost}, remaining=${snapshot.remaining})`);
 
-    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-    checkBurnRate(state, snapshot.remaining);
-    checkExhaustionForecast(state, snapshot.remaining);
+      if (result.reservationId) {
+        // v0.5.0: Reserve-then-commit pattern — hold the reservation open.
+        // It will be committed in the next beforePromptBuild or at agentEnd,
+        // allowing modelCostEstimator to reconcile the cost.
+        state.pendingModelReservation = {
+          reservationId: result.reservationId,
+          estimate: modelCost,
+          toolName: resolvedModel,
+          createdAt: Date.now(),
+          kind: "model",
+          currency: modelCurrency,
+        };
+        state.pendingModelName = resolvedModel;
+        state.pendingModelTurnIndex = state.turnIndex;
+      } else {
+        // No reservation ID (e.g. dry-run with DENY) — track immediately
+        trackCost(state, `model:${resolvedModel}`, modelCost);
+        state.totalModelCost += modelCost;
+        state.totalModelCalls++;
+      }
+
+      state.turnIndex++;
+      if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
+        state.remainingCallsAllowed--;
+      }
+      invalidateSnapshotCache(state);
+
+      logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      checkBurnRate(state, snapshot.remaining);
+      checkExhaustionForecast(state, snapshot.remaining);
+    }
   }
 
   if (resolvedModel !== eventModel) {
@@ -1115,7 +1162,13 @@ async function afterToolCallFor(
     emitHistogramFor(runtime, name, value, tags);
   const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
     logEventFor(runtime, state, entry);
-  const { state } = getSessionStateFor(runtime, event, ctx);
+  const { state } = findSessionStateFor(runtime, event, ctx);
+  if (!state || state.ending) {
+    logger.debug(
+      `after_tool_call: session state is absent or ending for callId=${event.toolCallId}`,
+    );
+    return;
+  }
   const reservation = state.activeReservations.get(event.toolCallId);
   if (!reservation) {
     logger.debug(
@@ -1195,15 +1248,22 @@ async function agentEndFor(
   const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
     logEventFor(runtime, state, entry);
   const { key, state } = getSessionStateFor(runtime, event, ctx);
+  state.ending = true;
   try {
     // v0.5.0: Commit any pending model reservation from the last turn.
     // If commit fails, release the reservation so budget isn't locked until TTL.
     if (state.pendingModelReservation) {
       const resId = state.pendingModelReservation.reservationId;
       try {
-        await commitPendingModelReservationFor(runtime, state);
+        const outcome = await commitPendingModelReservationFor(runtime, state);
+        if (outcome === "deferred") {
+          logger.warn(
+            `Failed to commit pending model reservation ${resId} at agent_end, releasing`,
+          );
+          await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+        }
       } catch (err) {
-        logger.warn(`Failed to commit pending model reservation ${resId} at agent_end, releasing:`, err);
+        logger.warn(`Unexpected error committing pending model reservation ${resId} at agent_end, releasing:`, err);
         await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
       }
     }
