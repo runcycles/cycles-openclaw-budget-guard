@@ -2,9 +2,9 @@
  * OpenClaw lifecycle hook implementations.
  *
  * All hooks follow the OpenClaw (event, ctx) => result pattern.
- * Mutable lifecycle state is isolated by the session/run identity supplied by
- * OpenClaw. Module-level values are limited to plugin runtime dependencies and
- * the map that owns those isolated states.
+ * Mutable lifecycle state is isolated first by plugin registration, then by
+ * the session/run identity supplied by OpenClaw. Each registered handler set
+ * closes over its own client, config, logger, metrics, and session state map.
  */
 
 import { type CyclesClient, isAllowed } from "runcycles";
@@ -50,10 +50,6 @@ import { DryRunClient } from "./dry-run.js";
 // Plugin runtime and isolated session state
 // ---------------------------------------------------------------------------
 
-let client: CyclesClient;
-let config: BudgetGuardConfig;
-let logger: OpenClawLogger;
-
 interface SessionState {
   /** In-flight tool reservations keyed by the host's toolCallId. */
   activeReservations: Map<string, ActiveReservation>;
@@ -85,62 +81,124 @@ interface SessionState {
   eventLogCapWarned: boolean;
 }
 
-/** All mutable hook lifecycle state, keyed by a stable OpenClaw scope. */
-const sessionStates = new Map<string, SessionState>();
+interface HookRuntime {
+  client: CyclesClient;
+  config: BudgetGuardConfig;
+  logger: OpenClawLogger;
+  /** All mutable lifecycle state for this registration, keyed by host scope. */
+  sessionStates: Map<string, SessionState>;
+  metricsEmitter?: MetricsEmitter;
+  baseTags: Record<string, string>;
+}
 
-/** v0.5.0: Metrics emitter reference (from config or OTLP auto-creation). */
-let metricsEmitter: MetricsEmitter | undefined;
-
-/** v0.5.0: Base tags for all metrics. */
-let baseTags: Record<string, string> = {};
+export interface HookHandlers {
+  beforeModelResolve: (
+    event: ModelResolveEvent,
+    ctx: HookContext,
+  ) => Promise<ModelResolveResult | undefined>;
+  beforePromptBuild: (
+    event: PromptBuildEvent,
+    ctx: HookContext,
+  ) => Promise<PromptBuildResult | undefined>;
+  beforeToolCall: (
+    event: ToolCallEvent,
+    ctx: HookContext,
+  ) => Promise<ToolCallResult | undefined>;
+  afterToolCall: (event: ToolResultEvent, ctx: HookContext) => Promise<void>;
+  agentEnd: (event: AgentEndEvent, ctx: HookContext) => Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
 
-/** Tracks whether initHooks has been called at least once this session. */
-let initialized = false;
+let defaultRuntime: HookRuntime | undefined;
+let defaultHandlers: HookHandlers | undefined;
+
+function createRuntime(
+  pluginConfig: BudgetGuardConfig,
+  apiLogger?: OpenClawLogger,
+): HookRuntime {
+  const runtimeLogger = apiLogger ?? createLogger(pluginConfig.logLevel);
+  let runtimeClient: CyclesClient;
+
+  if (pluginConfig.dryRun) {
+    runtimeClient = new DryRunClient(
+      pluginConfig.dryRunBudget,
+      pluginConfig.currency,
+    ) as unknown as CyclesClient;
+    runtimeLogger.info(
+      `[DRY-RUN] Simulated budget=${pluginConfig.dryRunBudget} ${pluginConfig.currency}`,
+    );
+  } else {
+    runtimeClient = createCyclesClient(pluginConfig);
+  }
+
+  const runtimeBaseTags: Record<string, string> = { tenant: pluginConfig.tenant };
+  if (pluginConfig.budgetScope) {
+    for (const [key, value] of Object.entries(pluginConfig.budgetScope)) {
+      runtimeBaseTags[key] = value;
+    }
+  }
+
+  return {
+    client: runtimeClient,
+    config: pluginConfig,
+    logger: runtimeLogger,
+    sessionStates: new Map(),
+    metricsEmitter: pluginConfig.metricsEmitter,
+    baseTags: runtimeBaseTags,
+  };
+}
+
+function createHandlers(runtime: HookRuntime): HookHandlers {
+  return {
+    beforeModelResolve: (event, ctx) => beforeModelResolveFor(runtime, event, ctx),
+    beforePromptBuild: (event, ctx) => beforePromptBuildFor(runtime, event, ctx),
+    beforeToolCall: (event, ctx) => beforeToolCallFor(runtime, event, ctx),
+    afterToolCall: (event, ctx) => afterToolCallFor(runtime, event, ctx),
+    agentEnd: (event, ctx) => agentEndFor(runtime, event, ctx),
+  };
+}
+
+function disposeRuntime(runtime: HookRuntime): void {
+  for (const state of runtime.sessionStates.values()) stopAllHeartbeats(state);
+  runtime.sessionStates.clear();
+}
+
+/** Create a fully isolated handler set for one OpenClaw plugin registration. */
+export function createHooks(
+  pluginConfig: BudgetGuardConfig,
+  apiLogger?: OpenClawLogger,
+): HookHandlers {
+  return createHandlers(createRuntime(pluginConfig, apiLogger));
+}
 
 /** @internal Reset initialization flag (for testing only). */
 export function _resetInitialized(): void {
-  initialized = false;
+  if (defaultRuntime) disposeRuntime(defaultRuntime);
+  defaultRuntime = undefined;
+  defaultHandlers = undefined;
 }
 
 export function initHooks(
   pluginConfig: BudgetGuardConfig,
   apiLogger?: OpenClawLogger,
-): void {
-  config = pluginConfig;
-  logger = apiLogger ?? createLogger(config.logLevel);
-
-  // Gap 10: Dry-run mode
-  if (config.dryRun) {
-    client = new DryRunClient(config.dryRunBudget, config.currency) as unknown as CyclesClient;
-    logger.info(`[DRY-RUN] Simulated budget=${config.dryRunBudget} ${config.currency}`);
-  } else {
-    client = createCyclesClient(config);
+): HookHandlers {
+  // Legacy direct-hook users share one intentionally stable default runtime.
+  // Production registrations use createHooks() and never touch this singleton.
+  if (!defaultHandlers) {
+    defaultRuntime = createRuntime(pluginConfig, apiLogger);
+    defaultHandlers = createHandlers(defaultRuntime);
   }
+  return defaultHandlers;
+}
 
-  // v0.5.0: Set up metrics emitter
-  metricsEmitter = config.metricsEmitter;
-  baseTags = { tenant: config.tenant };
-  if (config.budgetScope) {
-    for (const [key, value] of Object.entries(config.budgetScope)) {
-      baseTags[key] = value;
-    }
+function requireDefaultHandlers(): HookHandlers {
+  if (!defaultHandlers) {
+    throw new Error("initHooks must be called before invoking exported hook functions");
   }
-
-  // OpenClaw calls the plugin entrypoint (and thus initHooks) multiple times —
-  // once per channel/worker. Only reset isolated states on the first init.
-  // Subsequent inits update config/client/logger while preserving each
-  // session's own counters and reservations.
-  if (initialized) {
-    return;
-  }
-  initialized = true;
-
-  for (const state of sessionStates.values()) stopAllHeartbeats(state);
-  sessionStates.clear();
+  return defaultHandlers;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,9 +210,11 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 function resolveScope(
+  runtime: HookRuntime,
   event: Record<string, unknown>,
   ctx: HookContext,
 ): { key: string; userId?: string; sessionId?: string } {
+  const { config } = runtime;
   const metadata = ctx.metadata ?? {};
   const scopeKey = (kind: string, id: string) => JSON.stringify([config.tenant, kind, id]);
   const userId = asNonEmptyString(metadata.userId) ?? config.userId;
@@ -199,7 +259,11 @@ function resolveScope(
   return { key: scopeKey("unscoped", "default"), sessionId: config.sessionId };
 }
 
-function createSessionState(identity: { userId?: string; sessionId?: string }): SessionState {
+function createSessionState(
+  runtime: HookRuntime,
+  identity: { userId?: string; sessionId?: string },
+): SessionState {
+  const { config } = runtime;
   const now = Date.now();
   return {
     activeReservations: new Map(),
@@ -227,15 +291,16 @@ function createSessionState(identity: { userId?: string; sessionId?: string }): 
   };
 }
 
-function getSessionState(
+function getSessionStateFor(
+  runtime: HookRuntime,
   event: Record<string, unknown>,
   ctx: HookContext,
 ): { key: string; state: SessionState } {
-  const identity = resolveScope(event, ctx);
-  let state = sessionStates.get(identity.key);
+  const identity = resolveScope(runtime, event, ctx);
+  let state = runtime.sessionStates.get(identity.key);
   if (!state) {
-    state = createSessionState(identity);
-    sessionStates.set(identity.key, state);
+    state = createSessionState(runtime, identity);
+    runtime.sessionStates.set(identity.key, state);
   } else {
     state.resolvedUserId = identity.userId ?? state.resolvedUserId;
     state.resolvedSessionId = identity.sessionId ?? state.resolvedSessionId;
@@ -243,7 +308,10 @@ function getSessionState(
   return { key: identity.key, state };
 }
 
-async function getSnapshot(state: SessionState): Promise<BudgetSnapshot> {
+async function getSnapshotFor(runtime: HookRuntime, state: SessionState): Promise<BudgetSnapshot> {
+  const { client, config, logger } = runtime;
+  const emitGauge = (name: string, value: number, tags?: Record<string, string>) =>
+    emitGaugeFor(runtime, name, value, tags);
   const now = Date.now();
   if (state.cachedSnapshot && now - state.cachedSnapshotAt < config.snapshotCacheTtlMs) {
     return state.cachedSnapshot;
@@ -290,7 +358,7 @@ async function getSnapshot(state: SessionState): Promise<BudgetSnapshot> {
       logger.warn("onBudgetTransition callback error:", err);
     }
     if (config.budgetTransitionWebhookUrl) {
-      fireWebhook(config.budgetTransitionWebhookUrl, event);
+      fireWebhookFor(runtime, config.budgetTransitionWebhookUrl, event);
     }
   }
   state.lastKnownLevel = state.cachedSnapshot.level;
@@ -347,14 +415,14 @@ function buildForecast(state: SessionState): ForecastData {
 }
 
 /** Fire a webhook POST (best-effort, non-blocking). */
-function fireWebhook(url: string, payload: unknown): void {
+function fireWebhookFor(runtime: HookRuntime, url: string, payload: unknown): void {
   fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10_000),
   }).catch((err) => {
-    logger.warn(`Webhook POST to ${url} failed:`, err);
+    runtime.logger.warn(`Webhook POST to ${url} failed:`, err);
   });
 }
 
@@ -364,23 +432,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** v0.5.0: Safe metrics emission (never throws). */
-function emitGauge(name: string, value: number, tags?: Record<string, string>): void {
-  if (!metricsEmitter) return;
-  try { metricsEmitter.gauge(name, value, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+function emitGaugeFor(runtime: HookRuntime, name: string, value: number, tags?: Record<string, string>): void {
+  if (!runtime.metricsEmitter) return;
+  try { runtime.metricsEmitter.gauge(name, value, { ...runtime.baseTags, ...tags }); } catch { /* best-effort */ }
 }
-function emitCounter(name: string, delta: number, tags?: Record<string, string>): void {
-  if (!metricsEmitter) return;
-  try { metricsEmitter.counter(name, delta, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+function emitCounterFor(runtime: HookRuntime, name: string, delta: number, tags?: Record<string, string>): void {
+  if (!runtime.metricsEmitter) return;
+  try { runtime.metricsEmitter.counter(name, delta, { ...runtime.baseTags, ...tags }); } catch { /* best-effort */ }
 }
-function emitHistogram(name: string, value: number, tags?: Record<string, string>): void {
-  if (!metricsEmitter) return;
-  try { metricsEmitter.histogram(name, value, { ...baseTags, ...tags }); } catch { /* best-effort */ }
+function emitHistogramFor(runtime: HookRuntime, name: string, value: number, tags?: Record<string, string>): void {
+  if (!runtime.metricsEmitter) return;
+  try { runtime.metricsEmitter.histogram(name, value, { ...runtime.baseTags, ...tags }); } catch { /* best-effort */ }
 }
 
 const MAX_EVENT_LOG_ENTRIES = 10_000;
 
 /** v0.6.0: Append to event log if enabled. Capped to prevent unbounded growth. */
-function logEvent(state: SessionState, entry: ReservationLogEntry): void {
+function logEventFor(runtime: HookRuntime, state: SessionState, entry: ReservationLogEntry): void {
+  const { config, logger } = runtime;
   if (!config.enableEventLog) return;
   if (state.eventLog.length >= MAX_EVENT_LOG_ENTRIES) {
     if (!state.eventLogCapWarned) {
@@ -400,7 +469,10 @@ function sessionCostTotal(state: SessionState): number {
 }
 
 /** v0.6.0: Check burn rate and fire anomaly if needed. */
-function checkBurnRate(state: SessionState, remaining: number): void {
+function checkBurnRateFor(runtime: HookRuntime, state: SessionState, remaining: number): void {
+  const { config, logger } = runtime;
+  const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
+    emitCounterFor(runtime, name, delta, tags);
   const now = Date.now();
   const elapsed = now - state.windowStartedAt;
   if (elapsed < config.burnRateWindowMs || elapsed <= 0) return;
@@ -435,7 +507,10 @@ function checkBurnRate(state: SessionState, remaining: number): void {
 }
 
 /** v0.6.0: Check if budget will exhaust soon and warn. */
-function checkExhaustionForecast(state: SessionState, remaining: number): void {
+function checkExhaustionForecastFor(runtime: HookRuntime, state: SessionState, remaining: number): void {
+  const { config, logger } = runtime;
+  const emitGauge = (name: string, value: number, tags?: Record<string, string>) =>
+    emitGaugeFor(runtime, name, value, tags);
   if (state.exhaustionWarningFired || remaining === Infinity) return;
   const elapsed = Date.now() - state.sessionStartedAt;
   if (elapsed < 1000) return; // need at least 1s of data
@@ -464,7 +539,13 @@ function checkExhaustionForecast(state: SessionState, remaining: number): void {
 }
 
 /** v0.6.0: Start heartbeat timer for a tool reservation. */
-function startHeartbeat(state: SessionState, toolCallId: string, reservationId: string): void {
+function startHeartbeatFor(
+  runtime: HookRuntime,
+  state: SessionState,
+  toolCallId: string,
+  reservationId: string,
+): void {
+  const { client, config, logger } = runtime;
   if (config.heartbeatIntervalMs <= 0) return;
   const heartbeatClient = client;
   const heartbeatIntervalMs = config.heartbeatIntervalMs;
@@ -504,14 +585,21 @@ function stopAllHeartbeats(state: SessionState): void {
 }
 
 /** v0.5.0: Commit pending model reservation from previous turn. */
-async function commitPendingModelReservation(state: SessionState): Promise<void> {
+async function commitPendingModelReservationFor(
+  runtime: HookRuntime,
+  state: SessionState,
+): Promise<void> {
+  const { client, config, logger } = runtime;
+  const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
+    emitCounterFor(runtime, name, delta, tags);
+  const emitHistogram = (name: string, value: number, tags?: Record<string, string>) =>
+    emitHistogramFor(runtime, name, value, tags);
+  const logEventForRuntime = (entry: ReservationLogEntry) => logEventFor(runtime, state, entry);
+  const getSnapshotForRuntime = () => getSnapshotFor(runtime, state);
   if (!state.pendingModelReservation) return;
 
   const reservation = state.pendingModelReservation;
   const modelName = state.pendingModelName ?? "unknown";
-  state.pendingModelReservation = undefined;
-  state.pendingModelName = undefined;
-
   let actual = reservation.estimate;
   if (config.modelCostEstimator) {
     try {
@@ -528,7 +616,19 @@ async function commitPendingModelReservation(state: SessionState): Promise<void>
 
   const unit = reservation.currency ?? config.currency;
   const metrics: StandardMetrics = { model_version: modelName };
-  await commitUsage(client, reservation.reservationId, actual, unit, logger, metrics);
+  const committed = await commitUsage(
+    client,
+    reservation.reservationId,
+    actual,
+    unit,
+    logger,
+    metrics,
+  );
+  if (committed === false) {
+    throw new Error(`Failed to commit model reservation ${reservation.reservationId}`);
+  }
+  state.pendingModelReservation = undefined;
+  state.pendingModelName = undefined;
   logger.info(`Model committed: ${modelName} (cost=${actual} ${unit})`);
 
   trackCost(state, `model:${modelName}`, actual);
@@ -537,11 +637,11 @@ async function commitPendingModelReservation(state: SessionState): Promise<void>
 
   emitCounter("cycles.reservation.committed", 1, { kind: "model", name: modelName });
   emitHistogram("cycles.reservation.cost", actual, { kind: "model", name: modelName });
-  logEvent(state, { timestamp: Date.now(), hook: "commit_model", action: "commit", kind: "model", name: modelName, amount: actual, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
+  logEventForRuntime({ timestamp: Date.now(), hook: "commit_model", action: "commit", kind: "model", name: modelName, amount: actual, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
 
   invalidateSnapshotCache(state);
   if (config.aggressiveCacheInvalidation) {
-    await getSnapshot(state);
+    await getSnapshotForRuntime();
   }
 }
 
@@ -552,12 +652,27 @@ const DEFAULT_MODEL_COST = 500_000;
 // Hook: before_model_resolve
 // ---------------------------------------------------------------------------
 
-export async function beforeModelResolve(
+async function beforeModelResolveFor(
+  runtime: HookRuntime,
   event: ModelResolveEvent,
   ctx: HookContext,
 ): Promise<ModelResolveResult | undefined> {
-  const { state } = getSessionState(event, ctx);
-  const snapshot = await getSnapshot(state);
+  const { client, config, logger } = runtime;
+  const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
+    emitCounterFor(runtime, name, delta, tags);
+  const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
+    logEventFor(runtime, state, entry);
+  const checkBurnRate = (state: SessionState, remaining: number) =>
+    checkBurnRateFor(runtime, state, remaining);
+  const checkExhaustionForecast = (state: SessionState, remaining: number) =>
+    checkExhaustionForecastFor(runtime, state, remaining);
+  const { state } = getSessionStateFor(runtime, event, ctx);
+
+  // Never create a new hold until the previous model hold for this session has
+  // been finalized. A failed commit remains attached to this session so
+  // agent_end can release it rather than orphaning either reservation.
+  await commitPendingModelReservationFor(runtime, state);
+  const snapshot = await getSnapshotFor(runtime, state);
 
   // Resolve model name — check event fields, ctx.metadata, and config fallback.
   // OpenClaw may pass the model in different places depending on version.
@@ -682,9 +797,6 @@ export async function beforeModelResolve(
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
     logger.info(`Model reserved: ${resolvedModel} (estimate=${modelCost}, remaining=${snapshot.remaining})`);
 
-    // v0.5.0: Commit any pending model reservation from previous turn first
-    await commitPendingModelReservation(state);
-
     if (result.reservationId) {
       // v0.5.0: Reserve-then-commit pattern — hold the reservation open.
       // It will be committed in the next beforePromptBuild or at agentEnd,
@@ -732,17 +844,19 @@ export async function beforeModelResolve(
 // Hook: before_prompt_build
 // ---------------------------------------------------------------------------
 
-export async function beforePromptBuild(
+async function beforePromptBuildFor(
+  runtime: HookRuntime,
   event: PromptBuildEvent,
   ctx: HookContext,
 ): Promise<PromptBuildResult | undefined> {
-  const { state } = getSessionState(event, ctx);
+  const { config, logger } = runtime;
+  const { state } = getSessionStateFor(runtime, event, ctx);
   // v0.5.0: Commit pending model reservation from previous turn
-  await commitPendingModelReservation(state);
+  await commitPendingModelReservationFor(runtime, state);
 
   if (!config.injectPromptBudgetHint) return undefined;
 
-  const snapshot = await getSnapshot(state);
+  const snapshot = await getSnapshotFor(runtime, state);
 
   // Gap 12: Attach status
   attachBudgetStatus(ctx, snapshot);
@@ -771,10 +885,22 @@ export async function beforePromptBuild(
 // Hook: before_tool_call
 // ---------------------------------------------------------------------------
 
-export async function beforeToolCall(
+async function beforeToolCallFor(
+  runtime: HookRuntime,
   event: ToolCallEvent,
   ctx: HookContext,
 ): Promise<ToolCallResult | undefined> {
+  const { client, config, logger } = runtime;
+  const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
+    emitCounterFor(runtime, name, delta, tags);
+  const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
+    logEventFor(runtime, state, entry);
+  const startHeartbeat = (state: SessionState, toolCallId: string, reservationId: string) =>
+    startHeartbeatFor(runtime, state, toolCallId, reservationId);
+  const checkBurnRate = (state: SessionState, remaining: number) =>
+    checkBurnRateFor(runtime, state, remaining);
+  const checkExhaustionForecast = (state: SessionState, remaining: number) =>
+    checkExhaustionForecastFor(runtime, state, remaining);
   const toolName = event.toolName;
 
   // Guard against missing event fields
@@ -787,7 +913,7 @@ export async function beforeToolCall(
     return { block: true, blockReason: "Missing tool call ID in event" };
   }
 
-  const { state } = getSessionState(event, ctx);
+  const { state } = getSessionStateFor(runtime, event, ctx);
 
   // Gap 7: Check tool allowlist/blocklist
   const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
@@ -816,7 +942,7 @@ export async function beforeToolCall(
   }
 
   // Gap 12: Attach budget status
-  const snapshot = await getSnapshot(state);
+  const snapshot = await getSnapshotFor(runtime, state);
   attachBudgetStatus(ctx, snapshot);
 
   // Log once per tool when using default cost estimate
@@ -977,11 +1103,19 @@ export async function beforeToolCall(
 // Hook: after_tool_call
 // ---------------------------------------------------------------------------
 
-export async function afterToolCall(
+async function afterToolCallFor(
+  runtime: HookRuntime,
   event: ToolResultEvent,
   ctx: HookContext,
 ): Promise<void> {
-  const { state } = getSessionState(event, ctx);
+  const { client, config, logger } = runtime;
+  const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
+    emitCounterFor(runtime, name, delta, tags);
+  const emitHistogram = (name: string, value: number, tags?: Record<string, string>) =>
+    emitHistogramFor(runtime, name, value, tags);
+  const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
+    logEventFor(runtime, state, entry);
+  const { state } = getSessionStateFor(runtime, event, ctx);
   const reservation = state.activeReservations.get(event.toolCallId);
   if (!reservation) {
     logger.debug(
@@ -1009,7 +1143,19 @@ export async function afterToolCall(
   }
 
   const unit = reservation.currency ?? config.currency;
-  await commitUsage(client, reservation.reservationId, actual, unit, logger);
+  const committed = await commitUsage(
+    client,
+    reservation.reservationId,
+    actual,
+    unit,
+    logger,
+  );
+  if (committed === false) {
+    logger.warn(
+      `Tool commit failed for ${reservation.toolName}; retaining reservation for agent_end cleanup`,
+    );
+    return;
+  }
   // Delete from tracking AFTER commit (not before) so orphaned reservations
   // can be released at agentEnd if commit fails
   state.activeReservations.delete(event.toolCallId);
@@ -1030,7 +1176,7 @@ export async function afterToolCall(
 
   // v0.5.0: Aggressive cache invalidation — proactively refetch after mutation
   if (config.aggressiveCacheInvalidation) {
-    await getSnapshot(state);
+    await getSnapshotFor(runtime, state);
   }
 }
 
@@ -1038,18 +1184,24 @@ export async function afterToolCall(
 // Hook: agent_end
 // ---------------------------------------------------------------------------
 
-export async function agentEnd(
+async function agentEndFor(
+  runtime: HookRuntime,
   event: AgentEndEvent,
   ctx: HookContext,
 ): Promise<void> {
-  const { key, state } = getSessionState(event, ctx);
+  const { client, config, logger } = runtime;
+  const emitHistogram = (name: string, value: number, tags?: Record<string, string>) =>
+    emitHistogramFor(runtime, name, value, tags);
+  const logEvent = (state: SessionState, entry: ReservationLogEntry) =>
+    logEventFor(runtime, state, entry);
+  const { key, state } = getSessionStateFor(runtime, event, ctx);
   try {
     // v0.5.0: Commit any pending model reservation from the last turn.
     // If commit fails, release the reservation so budget isn't locked until TTL.
     if (state.pendingModelReservation) {
       const resId = state.pendingModelReservation.reservationId;
       try {
-        await commitPendingModelReservation(state);
+        await commitPendingModelReservationFor(runtime, state);
       } catch (err) {
         logger.warn(`Failed to commit pending model reservation ${resId} at agent_end, releasing:`, err);
         await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
@@ -1077,7 +1229,7 @@ export async function agentEnd(
 
     // Fetch final budget state for summary
     invalidateSnapshotCache(state);
-    const snapshot = await getSnapshot(state);
+    const snapshot = await getSnapshotFor(runtime, state);
 
     // Gap 6: Build cost breakdown as plain object
     const breakdown: Record<string, { count: number; totalCost: number }> = {};
@@ -1145,7 +1297,7 @@ export async function agentEnd(
       }
     }
     if (config.analyticsWebhookUrl) {
-      fireWebhook(config.analyticsWebhookUrl, summary);
+      fireWebhookFor(runtime, config.analyticsWebhookUrl, summary);
     }
 
     // v0.5.0: Emit session-level metrics
@@ -1155,9 +1307,9 @@ export async function agentEnd(
     emitHistogram("cycles.session.total_cost", totalCost);
 
     // v0.7.10: Flush metrics emitter to ensure all datapoints are sent
-    if (metricsEmitter?.flush) {
+    if (runtime.metricsEmitter?.flush) {
       try {
-        await metricsEmitter.flush();
+        await runtime.metricsEmitter.flush();
       } catch {
         // Best-effort — metrics flush failure is non-fatal
       }
@@ -1166,6 +1318,45 @@ export async function agentEnd(
     // Never allow a timer or completed session state to survive agent_end,
     // including callback, metrics, snapshot, commit, or release error paths.
     stopAllHeartbeats(state);
-    if (sessionStates.get(key) === state) sessionStates.delete(key);
+    if (runtime.sessionStates.get(key) === state) runtime.sessionStates.delete(key);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compatible direct hook exports
+// ---------------------------------------------------------------------------
+
+export async function beforeModelResolve(
+  event: ModelResolveEvent,
+  ctx: HookContext,
+): Promise<ModelResolveResult | undefined> {
+  return requireDefaultHandlers().beforeModelResolve(event, ctx);
+}
+
+export async function beforePromptBuild(
+  event: PromptBuildEvent,
+  ctx: HookContext,
+): Promise<PromptBuildResult | undefined> {
+  return requireDefaultHandlers().beforePromptBuild(event, ctx);
+}
+
+export async function beforeToolCall(
+  event: ToolCallEvent,
+  ctx: HookContext,
+): Promise<ToolCallResult | undefined> {
+  return requireDefaultHandlers().beforeToolCall(event, ctx);
+}
+
+export async function afterToolCall(
+  event: ToolResultEvent,
+  ctx: HookContext,
+): Promise<void> {
+  return requireDefaultHandlers().afterToolCall(event, ctx);
+}
+
+export async function agentEnd(
+  event: AgentEndEvent,
+  ctx: HookContext,
+): Promise<void> {
+  return requireDefaultHandlers().agentEnd(event, ctx);
 }

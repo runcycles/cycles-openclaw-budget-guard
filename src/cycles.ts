@@ -241,7 +241,7 @@ export async function reserveBudget(
 }
 
 // ---------------------------------------------------------------------------
-// Commit (best-effort — never throws)
+// Commit (best-effort — never throws, but reports the outcome)
 // ---------------------------------------------------------------------------
 
 export async function commitUsage(
@@ -251,7 +251,7 @@ export async function commitUsage(
   unit: string,
   logger: OpenClawLogger,
   metrics?: StandardMetrics,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const body: Record<string, unknown> = {
       idempotency_key: randomUUID(),
@@ -265,9 +265,12 @@ export async function commitUsage(
       logger.warn(
         `Commit for reservation ${reservationId} returned status ${response.status}`,
       );
+      return false;
     }
+    return true;
   } catch (err) {
     logger.warn(`Commit failed for reservation ${reservationId}:`, err);
+    return false;
   }
 }
 

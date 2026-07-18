@@ -574,9 +574,12 @@ The `costEstimator` receives a context object with `toolName`, `durationMs`, `es
 | `userId` | string | — | User ID for budget scoping (can be overridden via `ctx.metadata.userId`) |
 | `sessionId` | string | — | Session ID fallback for budget scoping and lifecycle isolation. A host-provided `ctx.sessionId` takes precedence. |
 
-The guard keeps reservations, pending model holds, snapshot caches, cost totals,
-tool-call limits, event logs, forecasts, and heartbeat timers in an isolated
-state for each OpenClaw session. Scope identity is selected in this order:
+Each plugin registration owns an independent Cycles client, configuration,
+logger, metrics emitter, dry-run reservation store, and session-state map. Within
+that runtime, the guard keeps reservations, pending model holds, snapshot
+caches, cost totals, tool-call limits, event logs, forecasts, and heartbeat
+timers in an isolated state for each OpenClaw session. Scope identity is
+selected in this order:
 host `sessionId`, host `sessionKey` (or legacy `conversationId`), host `runId`,
 configured `sessionId`, host `agentId`, configured/metadata `userId`, then a
 tenant-level unscoped fallback. Direct context fields and legacy
@@ -916,7 +919,13 @@ Separately from `failClosed`, the plugin handles **network/transient errors** wi
 }
 ```
 
-Note: commit failures are still fail-open even with this flag — once a reservation is created, the spend has already been committed server-side and local commit retries can't change that. Reservations expire via TTL if commits never reach the server.
+Note: commit failures are still fail-open even with this flag. A successful
+reservation is only a hold; it is not recorded as spend until commit succeeds.
+If a tool commit fails, its heartbeat stops and the hold remains owned by that
+session for release during `agent_end`. A final model commit failure is released
+immediately during `agent_end`. If the control plane is also unavailable for the
+release, the server-side TTL is the final cleanup mechanism and the actual spend
+may remain unreported.
 
 ## Troubleshooting
 
@@ -981,7 +990,7 @@ Before deploying to production:
 | **Model cost is estimated by default.** OpenClaw has no `after_model_resolve` hook, so model costs are based on `modelBaseCosts` estimates. The `modelCostEstimator` callback can reconcile costs if you have a proxy or gateway with token counts. | Cost tracking for models is approximate unless you provide a `modelCostEstimator`. The plugin will never *overspend* — it may *under-track* slightly. | Use `modelCostEstimator` to reconcile costs. Or buffer `modelBaseCosts` estimates 10–20% higher than expected. |
 | **`ALLOW_WITH_CAPS` decisions are not enforced.** If the Cycles server returns caps (max_tokens, tool allowlist) alongside an ALLOW decision, the plugin stores them but does not apply them downstream. | Low risk — v0 Cycles servers rarely return caps. | Monitor Cycles protocol updates. |
 | **Per-user/session scoping uses custom dimensions.** User and session IDs are passed as `dimensions.user` / `dimensions.session` in the reservation subject. v0 Cycles servers may ignore custom dimensions for balance filtering. | Per-user budget isolation depends on server support for dimensions. | Verify scoping works with your Cycles server version before relying on it in production. |
-| **Lifecycle isolation depends on a host scope identifier.** Current OpenClaw contexts provide `sessionId`, `sessionKey`, and `runId`; custom or older hosts may provide none. | Without any session/run identifier (or configured fallback), concurrent invocations can collapse to agent-, user-, or tenant-scoped best-effort state. | Pass `ctx.sessionId`, `ctx.sessionKey`, or `ctx.runId`; otherwise configure a unique `sessionId` per concurrent session. |
+| **Lifecycle isolation within a plugin registration depends on a host scope identifier.** Registrations are always isolated from each other. Current OpenClaw contexts provide `sessionId`, `sessionKey`, and `runId`; custom or older hosts may provide none. | Without any session/run identifier (or configured fallback), concurrent invocations in the same registration can collapse to agent-, user-, or tenant-scoped best-effort state. | Pass `ctx.sessionId`, `ctx.sessionKey`, or `ctx.runId`; otherwise configure a unique `sessionId` per concurrent session. |
 | **Heartbeat requires client support.** Reservation auto-extension (`heartbeatIntervalMs`) calls `client.extendReservation()`. If the Cycles client does not implement this method, heartbeats are silently skipped. | Long-running tools may still lose cost tracking if the client lacks `extendReservation`. | Use per-tool TTL overrides via `toolReservationTtls` as fallback. |
 | **Model blocking uses a provider-error workaround.** OpenClaw's `before_model_resolve` hook does not support `{ block: true }` ([feature request](https://github.com/openclaw/openclaw/issues/55771)). When budget is exhausted, the plugin overrides the model to `__cycles_budget_exhausted__`, causing the provider to reject the call. The user sees "Unknown model" instead of a clean budget error. | Model calls are effectively blocked, but the error message is a provider error rather than a budget message. Tool blocking via `before_tool_call` works cleanly with `{ block: true }`. | Pending OpenClaw adding `block` support to `before_model_resolve`. |
 | **OpenClaw does not pass model name in hook events.** The `before_model_resolve` event only contains `{ prompt }` — no model name ([feature request](https://github.com/openclaw/openclaw/issues/55771)). The plugin auto-detects the model from system config or falls back to `defaultModelName`. | Model-specific cost tracking requires `defaultModelName` to be set in plugin config. | Set `defaultModelName` to your agent's model (e.g. `"openai/gpt-5-nano"`). |

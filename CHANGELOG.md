@@ -22,11 +22,16 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 
 ### Fixed
 
-- Isolated all mutable hook lifecycle state by the OpenClaw session/run scope.
-  Concurrent sessions no longer share pending model holds, active tool
-  reservations, cost totals, caches, call limits, event logs, forecasts, or
-  heartbeat timers. Session cleanup now stops and releases only that session's
-  resources, including commit-error paths. No public API migration is required.
+- Isolated every plugin registration's client, config, logger, metrics, dry-run
+  store, and session-state map, then isolated mutable lifecycle state by the
+  OpenClaw session/run scope inside that runtime. Concurrent sessions and
+  tenants no longer share pending model holds, active tool reservations, cost
+  totals, caches, call limits, event logs, forecasts, or heartbeat timers.
+- Made reservation commit outcomes explicit internally. Failed tool commits
+  retain their hold for session cleanup, failed final model commits are
+  released, and a new model hold is never created before the prior hold commits.
+  Heartbeats stop on successful commits, failed commits, release cleanup, and
+  all `agent_end` error paths. No public package API migration is required.
 
 ## [0.8.4] — 2026-05-07
 

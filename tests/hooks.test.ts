@@ -50,6 +50,7 @@ const mockFetch = vi.fn(() => Promise.resolve({ ok: true }));
 vi.stubGlobal("fetch", mockFetch);
 
 import {
+  createHooks,
   initHooks,
   _resetInitialized,
   beforeModelResolve,
@@ -71,6 +72,7 @@ function setup(configOverrides?: Parameters<typeof makeConfig>[0]) {
 
 describe("initHooks", () => {
   beforeEach(() => {
+    _resetInitialized();
     vi.clearAllMocks();
   });
 
@@ -142,6 +144,16 @@ describe("initHooks", () => {
       expect.stringContaining("[DRY-RUN]"),
     );
   });
+
+  it("does not replace the dry-run reservation store on repeated legacy init", async () => {
+    const { DryRunClient } = await import("../src/dry-run.js");
+    const config = makeConfig({ dryRun: true, dryRunBudget: 50_000_000 });
+
+    initHooks(config, makeLogger());
+    initHooks(config, makeLogger());
+
+    expect(DryRunClient).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("beforeModelResolve — snapshot caching", () => {
@@ -172,11 +184,9 @@ describe("beforeModelResolve — snapshot caching", () => {
     vi.advanceTimersByTime(3000);
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
-    // Each beforeModelResolve call triggers a fetch because model reservation
-    // invalidates the cache after commit. The second call also commits the
-    // pending model reservation from turn 1, which triggers an aggressive
-    // cache refetch.
-    expect(mockFetchBudgetState).toHaveBeenCalledTimes(3);
+    // The second call commits before reading the snapshot. Its aggressive
+    // refetch satisfies that call's snapshot read, avoiding a duplicate fetch.
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(2);
   });
 
   it("re-fetches with configurable cache TTL after invalidation", async () => {
@@ -190,8 +200,8 @@ describe("beforeModelResolve — snapshot caching", () => {
     vi.advanceTimersByTime(1500); // > 1s custom TTL
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
 
-    // 3 calls: first resolve, aggressive refetch after pending commit, second resolve
-    expect(mockFetchBudgetState).toHaveBeenCalledTimes(3);
+    // First resolve + the second resolve's aggressive post-commit refetch.
+    expect(mockFetchBudgetState).toHaveBeenCalledTimes(2);
   });
 
   afterEach(() => {
@@ -2858,7 +2868,7 @@ describe("concurrent session isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    mockCommitUsage.mockResolvedValue(undefined);
+    mockCommitUsage.mockResolvedValue(true);
     mockReleaseReservation.mockResolvedValue(undefined);
     mockCreateCyclesClient.mockReturnValue({ extendReservation: mockExtendReservation });
     mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
@@ -2958,9 +2968,8 @@ describe("concurrent session isolation", () => {
       }),
     );
     mockCommitUsage.mockImplementation(
-      (_client: unknown, reservationId: string) => reservationId === "error-tool-a"
-        ? Promise.reject(new Error("commit failed"))
-        : Promise.resolve(undefined),
+      (_client: unknown, reservationId: string) =>
+        Promise.resolve(reservationId !== "error-tool-a"),
     );
 
     await beforeToolCall({ toolName: "tool-a", toolCallId: "same-id" }, sessionA);
@@ -2968,7 +2977,7 @@ describe("concurrent session isolation", () => {
 
     await expect(
       afterToolCall({ toolName: "tool-a", toolCallId: "same-id", error: "failed" }, sessionA),
-    ).rejects.toThrow("commit failed");
+    ).resolves.toBeUndefined();
 
     // A's timer stopped on the error path; B's timer is still alive.
     mockExtendReservation.mockClear();
@@ -2989,6 +2998,113 @@ describe("concurrent session isolation", () => {
     expect(mockExtendReservation).not.toHaveBeenCalled();
     await agentEnd({ runId: "run-b", success: true }, sessionB);
     expect(mockReleaseReservation.mock.calls.map((call) => call[1])).toEqual(["error-tool-a"]);
+  });
+
+  it("isolates clients, pending models, costs, releases, and timers across registrations", async () => {
+    const extendA = vi.fn().mockResolvedValue({});
+    const extendB = vi.fn().mockResolvedValue({});
+    const clientA = { runtime: "a", extendReservation: extendA };
+    const clientB = { runtime: "b", extendReservation: extendB };
+    const metricsA = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    const metricsB = { gauge: vi.fn(), counter: vi.fn(), histogram: vi.fn() };
+    mockCreateCyclesClient
+      .mockReturnValueOnce(clientA)
+      .mockReturnValueOnce(clientB);
+
+    const summariesA: SessionSummary[] = [];
+    const summariesB: SessionSummary[] = [];
+    const hooksA = createHooks(makeConfig({
+      tenant: "tenant-a",
+      heartbeatIntervalMs: 1_000,
+      aggressiveCacheInvalidation: false,
+      injectPromptBudgetHint: false,
+      modelBaseCosts: { shared: 1_000 },
+      toolBaseCosts: { shared: 100 },
+      metricsEmitter: metricsA,
+      onSessionEnd: (summary) => { summariesA.push(summary); },
+    }), makeLogger());
+    const hooksB = createHooks(makeConfig({
+      tenant: "tenant-b",
+      heartbeatIntervalMs: 1_000,
+      aggressiveCacheInvalidation: false,
+      injectPromptBudgetHint: false,
+      modelBaseCosts: { shared: 2_000 },
+      toolBaseCosts: { shared: 200 },
+      metricsEmitter: metricsB,
+      onSessionEnd: (summary) => { summariesB.push(summary); },
+    }), makeLogger());
+
+    mockReserveBudget.mockImplementation(
+      (_client: unknown, config: { tenant: string }, request: { actionName: string; actionKind: string }) =>
+        Promise.resolve({
+          decision: "ALLOW",
+          reservationId: `${config.tenant}-${request.actionKind}-${request.actionName}`,
+          affectedScopes: [],
+        }),
+    );
+    mockCommitUsage.mockImplementation(
+      (_client: unknown, reservationId: string) =>
+        Promise.resolve(reservationId !== "tenant-b-tool.shared-shared"),
+    );
+
+    // The host identity and call ID deliberately collide. Registration
+    // ownership must still keep these tenants entirely separate.
+    const sharedContext = { sessionId: "same-session", metadata: {} };
+    await hooksA.beforeModelResolve({ model: "shared" }, sharedContext);
+    await hooksB.beforeModelResolve({ model: "shared" }, sharedContext);
+    await hooksA.beforeToolCall({ toolName: "shared", toolCallId: "same-call" }, sharedContext);
+    await hooksB.beforeToolCall({ toolName: "shared", toolCallId: "same-call" }, sharedContext);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(extendA).toHaveBeenCalledWith("tenant-a-tool.shared-shared", expect.anything());
+    expect(extendB).toHaveBeenCalledWith("tenant-b-tool.shared-shared", expect.anything());
+
+    mockCommitUsage.mockClear();
+    await hooksB.beforePromptBuild({}, sharedContext);
+    await hooksA.beforePromptBuild({}, sharedContext);
+    expect(mockCommitUsage.mock.calls.slice(0, 2).map((call) => [call[0], call[1]])).toEqual([
+      [clientB, "tenant-b-llm.completion-shared"],
+      [clientA, "tenant-a-llm.completion-shared"],
+    ]);
+
+    await hooksA.afterToolCall({ toolName: "shared", toolCallId: "same-call" }, sharedContext);
+    await hooksB.afterToolCall({ toolName: "shared", toolCallId: "same-call", error: "commit failed" }, sharedContext);
+
+    extendA.mockClear();
+    extendB.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(extendA).not.toHaveBeenCalled();
+    expect(extendB).not.toHaveBeenCalled();
+
+    await hooksA.agentEnd({}, sharedContext);
+    expect(mockReleaseReservation).not.toHaveBeenCalled();
+    await hooksB.agentEnd({}, sharedContext);
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      clientB,
+      "tenant-b-tool.shared-shared",
+      "agent_end_cleanup",
+      expect.anything(),
+    );
+    expect(mockReleaseReservation).not.toHaveBeenCalledWith(
+      clientA,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    expect(summariesA[0]?.tenant).toBe("tenant-a");
+    expect(summariesA[0]?.costBreakdown).toEqual({
+      "model:shared": { count: 1, totalCost: 1_000 },
+      "tool:shared": { count: 1, totalCost: 100 },
+    });
+    expect(summariesB[0]?.tenant).toBe("tenant-b");
+    expect(summariesB[0]?.costBreakdown).toEqual({
+      "model:shared": { count: 1, totalCost: 2_000 },
+    });
+    expect(metricsA.counter).toHaveBeenCalled();
+    expect(metricsB.counter).toHaveBeenCalled();
+    expect(metricsA.counter.mock.calls.every((call) => call[2]?.tenant === "tenant-a")).toBe(true);
+    expect(metricsB.counter.mock.calls.every((call) => call[2]?.tenant === "tenant-b")).toBe(true);
   });
 });
 
@@ -3184,14 +3300,39 @@ describe("v0.7.10 — model reservation release on commit failure", () => {
     mockIsAllowed.mockReturnValue(true);
     // Reserve succeeds, but commit will fail
     mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-r1", affectedScopes: [] });
-    mockCommitUsage
-      .mockRejectedValueOnce(new Error("commit failed")) // first commit in agentEnd fails
-      .mockResolvedValue(undefined); // subsequent commits ok
+    mockCommitUsage.mockResolvedValue(false);
 
     await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
     // Now there's a pending model reservation — agentEnd should try to commit, fail, then release
     await agentEnd({}, makeHookContext());
 
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-r1",
+      "commit_failed_at_agent_end",
+      expect.anything(),
+    );
+  });
+
+  it("does not create a second model hold when the pending commit fails", async () => {
+    setup({ aggressiveCacheInvalidation: false });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockReserveBudget.mockResolvedValue({
+      decision: "ALLOW",
+      reservationId: "model-r1",
+      affectedScopes: [],
+    });
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    mockCommitUsage.mockResolvedValue(false);
+
+    await expect(
+      beforeModelResolve({ model: "gpt-4o" }, makeHookContext()),
+    ).rejects.toThrow("Failed to commit model reservation model-r1");
+    expect(mockReserveBudget).toHaveBeenCalledTimes(1);
+
+    await agentEnd({}, makeHookContext());
     expect(mockReleaseReservation).toHaveBeenCalledWith(
       expect.anything(),
       "model-r1",

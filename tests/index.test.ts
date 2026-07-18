@@ -27,7 +27,16 @@ vi.mock("../src/config.js", () => ({
 }));
 
 vi.mock("../src/hooks.js", () => ({
-  initHooks: (...args: unknown[]) => mockInitHooks(...args),
+  createHooks: (...args: unknown[]) => {
+    mockInitHooks(...args);
+    return {
+      beforeModelResolve: mockBeforeModelResolve,
+      beforePromptBuild: mockBeforePromptBuild,
+      beforeToolCall: mockBeforeToolCall,
+      afterToolCall: mockAfterToolCall,
+      agentEnd: mockAgentEnd,
+    };
+  },
   beforeModelResolve: mockBeforeModelResolve,
   beforePromptBuild: mockBeforePromptBuild,
   beforeToolCall: mockBeforeToolCall,
@@ -255,7 +264,7 @@ describe("plugin entrypoint", () => {
     expect(infoCall).toContain("cyclesApiKey: (not set)");
   });
 
-  it("calls initHooks with resolved config and api.logger", () => {
+  it("creates isolated hooks with resolved config and api.logger", () => {
     const resolvedConfig = makeConfig();
     mockResolveConfig.mockReturnValue(resolvedConfig);
 
@@ -286,7 +295,7 @@ describe("plugin entrypoint", () => {
     const api = { config: {}, logger, on: vi.fn() };
     registerPlugin(api);
 
-    // The wrapped logger is passed to initHooks — call it to test filtering
+    // The wrapped logger is passed to createHooks — call it to test filtering
     const wrappedLogger = mockInitHooks.mock.calls[0][1];
     wrappedLogger.debug("should be filtered");
     wrappedLogger.info("should be filtered");
