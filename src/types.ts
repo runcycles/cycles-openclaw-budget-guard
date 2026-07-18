@@ -319,12 +319,14 @@ export interface OpenClawPluginApi {
 }
 
 // ---------------------------------------------------------------------------
-// OpenClaw hook event types (approximated from OpenClaw docs)
+// OpenClaw hook event types
 // ---------------------------------------------------------------------------
 
 /** Event for the before_model_resolve hook. */
 export interface ModelResolveEvent {
-  model: string;
+  /** Present on older hosts; current hosts expose the resolved model on ctx. */
+  model?: string;
+  runId?: string;
   [key: string]: unknown;
 }
 
@@ -348,6 +350,7 @@ export interface PromptBuildResult {
 export interface ToolCallEvent {
   toolName: string;
   toolCallId: string;
+  runId?: string;
   params?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -363,6 +366,7 @@ export interface ToolCallResult {
 export interface ToolResultEvent {
   toolName: string;
   toolCallId: string;
+  runId?: string;
   result?: unknown;
   durationMs?: number;
   [key: string]: unknown;
@@ -370,11 +374,24 @@ export interface ToolResultEvent {
 
 /** Event for the agent_end hook. */
 export interface AgentEndEvent {
+  runId?: string;
   [key: string]: unknown;
 }
 
 /** Context object available in hook handlers. */
 export interface HookContext {
+  /** Stable physical session UUID supplied by current OpenClaw hosts. */
+  sessionId?: string;
+  /** Stable logical session key supplied by current OpenClaw hosts. */
+  sessionKey?: string;
+  /** Per-agent-run identifier, used when no session identifier is available. */
+  runId?: string;
+  agentId?: string;
+  modelProviderId?: string;
+  modelId?: string;
+  /** Compatibility fallback used by some older/custom hosts. */
+  conversationId?: string;
+  /** Legacy/custom context metadata retained for compatibility. */
   metadata?: Record<string, unknown>;
   [key: string]: unknown;
 }

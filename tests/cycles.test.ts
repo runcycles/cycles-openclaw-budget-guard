@@ -841,7 +841,8 @@ describe("commitUsage", () => {
     });
 
     const client = createCyclesClient(makeConfig());
-    await commitUsage(client, "res-ok", 500_000, "USD_MICROCENTS", logger);
+    const committed = await commitUsage(client, "res-ok", 500_000, "USD_MICROCENTS", logger);
+    expect(committed).toBe(true);
     expect(mockCommitReservation).toHaveBeenCalledWith("res-ok", {
       idempotency_key: "test-uuid-1234",
       actual: { unit: "USD_MICROCENTS", amount: 500_000 },
@@ -849,16 +850,16 @@ describe("commitUsage", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("does not throw on API error", async () => {
+  it("returns false without throwing on a transient 503", async () => {
     mockCommitReservation.mockResolvedValue({
       isSuccess: false,
-      status: 500,
+      status: 503,
     });
 
     const client = createCyclesClient(makeConfig());
     await expect(
       commitUsage(client, "res-1", 500_000, "USD_MICROCENTS", logger),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(logger.warn).toHaveBeenCalled();
   });
 
@@ -868,7 +869,7 @@ describe("commitUsage", () => {
     const client = createCyclesClient(makeConfig());
     await expect(
       commitUsage(client, "res-1", 500_000, "USD_MICROCENTS", logger),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(logger.warn).toHaveBeenCalled();
   });
 

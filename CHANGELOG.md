@@ -20,6 +20,24 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
+### Fixed
+
+- Isolated every plugin registration's client, config, logger, metrics, dry-run
+  store, and session-state map, then isolated mutable lifecycle state by the
+  OpenClaw session/run scope inside that runtime. Concurrent sessions and
+  tenants no longer share pending model holds, active tool reservations, cost
+  totals, caches, call limits, event logs, forecasts, or heartbeat timers.
+- Made reservation commit outcomes explicit internally. Failed tool commits
+  retain their hold for session cleanup, failed final model commits are
+  released, and transient model commit failures no longer reject pre-model
+  hooks. The next model call proceeds fail-open with local cost accounting but
+  without creating a second hold. Heartbeats stop on successful commits, failed
+  commits, release cleanup, and all `agent_end` error paths.
+- Prevented late or duplicate `after_tool_call` delivery from recreating state
+  after `agent_end`. Terminal hooks now use lookup-only state and ignore a
+  session as soon as its cleanup begins, avoiding post-run map growth and
+  commit/release races. No public package API migration is required.
+
 ## [0.8.4] — 2026-05-07
 
 npm metadata refresh for category-search discovery. **No code changes** — bundle and runtime behavior are identical to 0.8.3.

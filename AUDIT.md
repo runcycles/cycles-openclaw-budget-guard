@@ -1,7 +1,7 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
-**Date:** 2026-05-06
-**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.3
+**Date:** 2026-07-18
+**Plugin:** `@runcycles/openclaw-budget-guard` v0.8.4 + unreleased fixes
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
 **Cycles client:** `runcycles` ^0.3.0
 
@@ -25,9 +25,55 @@
 | Prompt Hint Formatting | — | 0 |
 | Session Summary & Metadata | — | 0 |
 | Published Package Contents (`files` field) | — | 0 |
-| Code Review (logic, safety, types) | 14 found | 9 fixed, 5 accepted |
+| Code Review (logic, safety, types) | 14 found | 10 fixed, 4 accepted |
 
-**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case. v0.8.0 adds `budgetScope` for full scope hierarchy targeting. v0.8.1 fixes case-insensitive scope matching. v0.8.2 fixes tenant-only config checking wrong budget scope (#76). v0.8.3 hardens against snapshot-fetch-bypass, webhook SSRF, OTLP collector hangs, and TTL/retry typos; adds `failClosedOnSnapshotError`, URL validation, OTLP request timeout, and TTL/retry bounds.
+**Overall: Plugin is contract-conformant and production-ready.** All 62 config properties (54 JSON-serializable + 8 callbacks), 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and correctly tested. v0.5.0 adds model reserve-then-commit, MetricsEmitter, StandardMetrics, aggressive cache invalidation, and OTLP adapter. v0.6.0 adds heartbeat, retry, burn rate detection, event log, unconfigured tool report, and exhaustion forecast. v0.7.x adds branded startup, consistent naming, single-source version, process.env removal, model name auto-detection, and reservation lifecycle fixes. v0.7.6–v0.7.9 fix budget enforcement bugs, config validation gaps, and documentation. v0.7.10 fixes glob matching, record validation, webhook timeout, metrics flush, event log performance, DryRunClient ID isolation, model reservation cleanup, null cost estimator handling, budget fetch timeout, config validation for strategies/fallbacks/negative costs, error prefix consistency, and prompt hint truncation edge case. v0.8.0 adds `budgetScope` for full scope hierarchy targeting. v0.8.1 fixes case-insensitive scope matching. v0.8.2 fixes tenant-only config checking wrong budget scope (#76). v0.8.3 hardens against snapshot-fetch-bypass, webhook SSRF, OTLP collector hangs, and TTL/retry typos; adds `failClosedOnSnapshotError`, URL validation, OTLP request timeout, and TTL/retry bounds. The unreleased fix binds all runtime dependencies per plugin registration, isolates mutable enforcement state by OpenClaw session/run identity, and makes commit failures observable for lifecycle cleanup.
+
+---
+
+## Unreleased Changes (2026-07-18)
+
+### Concurrent session correctness
+
+| Fix | Description | Location |
+|---|---|---|
+| Registration-scoped runtime | Each plugin entrypoint call now registers closures over a dedicated client, config, logger, metrics emitter, dry-run store, and session map. A later tenant/worker registration cannot redirect an in-flight session to another runtime. | `src/hooks.ts:createHooks`, `src/index.ts` |
+| Session-scoped lifecycle state | Replaced process-global reservation, pending-model, cost, cache, limit, event-log, forecast, and heartbeat state with `SessionState` entries keyed by the OpenClaw hook scope. Identity preference is `sessionId` → `sessionKey`/`conversationId` → `runId` → configured `sessionId` → `agentId` → `userId` → documented tenant fallback. | `src/hooks.ts:SessionState`, `resolveScope`, `getSessionState` |
+| Pending model isolation | Each session/run now owns its own pending model reservation and model name, so an interleaved model call in session B cannot replace or commit session A's hold. | `src/hooks.ts:commitPendingModelReservation`, `beforeModelResolve`, `beforePromptBuild`, `agentEnd` |
+| Observable, fail-open commit outcomes | `commitUsage` now returns success/failure. Failed tool commits retain the hold for `agent_end`; pending model commit failures no longer reject pre-model hooks; the next model call is costed locally without creating a second hold; failed final model commits are released. | `src/cycles.ts:commitUsage`, `src/hooks.ts:commitPendingModelReservationFor`, `beforeModelResolveFor`, `beforePromptBuildFor`, `afterToolCallFor` |
+| Reservation and heartbeat cleanup | Tool reservations and heartbeat timers are looked up within the invoking session. Both successful and failed commits stop only that call's timer; `agent_end` stops only that session's timers, releases only its orphaned holds, and removes its state in a `finally` block on every error path. | `src/hooks.ts:startHeartbeatFor`, `stopHeartbeat`, `stopAllHeartbeats`, `afterToolCallFor`, `agentEndFor` |
+| Terminal state fencing | `after_tool_call` uses lookup-only state and no-ops when the scope is absent or already entering `agent_end`. Late/duplicate deliveries cannot resurrect deleted entries, grow the session map, or race a terminal release with a commit. | `src/hooks.ts:findSessionStateFor`, `SessionState.ending`, `afterToolCallFor`, `agentEndFor` |
+| Host hook context contract | Hook context types now include OpenClaw's direct `sessionId`, `sessionKey`, `runId`, `agentId`, and model fields while retaining legacy `metadata` compatibility. | `src/types.ts:HookContext` |
+
+### Regression coverage
+
+- Added two-session lifecycle tests that deliberately interleave pending model
+  reservations and reuse a tool call ID across sessions. They verify model
+  commits, tool commits/releases, summaries, costs, call counts, and heartbeat
+  ownership have zero cross-talk.
+- Added an interleaved commit-error test proving the failing session's heartbeat
+  stops and its orphan is released without stopping or releasing the other
+  session's reservation.
+- Added a same-session-ID, two-registration test proving clients, configs,
+  pending models, tool holds, summaries, costs, releases, and timers cannot
+  cross tenant/runtime boundaries.
+- Added production-realistic non-success tests for tool and model commits,
+  including the invariant that a failed pending model commit cannot create a
+  second hold. Model resolve and prompt-build tests assert these failures remain
+  non-throwing and that unreserved model cost is accounted locally.
+- Added terminal-delivery tests proving concurrent, late, and duplicate
+  `after_tool_call` events neither commit a releasing hold nor resurrect session
+  state after `agent_end`. Public package API shape is unchanged; no migration
+  is required. Hosts that omit every session/run identifier receive documented
+  best-effort isolation only within a registration.
+
+| Metric | Result |
+|---|---:|
+| Test count | 380 passing |
+| Statement coverage | 98.23% |
+| Branch coverage | 95.64% |
+| Function coverage | 99.35% |
+| Line coverage | 98.83% |
 
 ---
 
@@ -648,6 +694,25 @@ DryRunClient hardcoded `"USD_MICROCENTS"` for all balance units. When users conf
 
 **Fix:** Added `currency` constructor parameter. `initHooks` passes `config.currency`. Test updated.
 
+#### 8. Process-global hook lifecycle state
+
+**File:** `src/hooks.ts`
+**Severity:** High — Concurrent sessions could commit, attribute, or release each other's budget holds
+
+Reservations, pending model state, cost totals, caches, counters, event logs,
+forecasts, and heartbeat timers were shared module singletons. In particular,
+one pending-model slot allowed session B to overwrite session A's hold.
+
+**Fix:** Each plugin registration now closes over an independent runtime
+(client, config, logger, metrics, dry-run store, and session map). Every
+lifecycle value lives in `SessionState`, keyed by OpenClaw's session/run identity
+inside that runtime. Commit helpers expose non-success outcomes so failed tool
+holds remain releasable, transient model failures stay fail-open without a
+second hold, and failed final model holds are released. Lookup-only terminal
+access and an `ending` fence prevent late hooks from resurrecting state or
+racing cleanup. Interleaved session and registration tests include colliding
+IDs, terminal delivery, and heartbeat ownership.
+
 ### Issues Accepted (No Fix Needed)
 
 #### 4. Stale snapshot.level in retry success path
@@ -676,15 +741,6 @@ Webhooks are non-blocking best-effort. Errors are caught and logged but delivery
 Response bodies from runcycles are cast without runtime validation.
 
 **Accepted:** The runcycles SDK validates responses internally. `DryRunClient` is only called by our own typed code.
-
-#### 7. Module-level mutable state
-
-**File:** `src/hooks.ts:48-85`
-**Severity:** Low
-
-Plugin uses module-level variables reset in `initHooks()`. Not safely reentrant for concurrent instances.
-
-**Accepted:** OpenClaw guarantees single-instance initialization. Module-level state is the standard plugin pattern. `initHooks()` resets all state completely.
 
 #### 8. Model costs are estimated, not actual
 
@@ -783,7 +839,7 @@ Overage policy values used `ALLOW` and `ALLOW_WITH_CAPS` (which are `Decision` e
 
 ## Verdict
 
-The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 45 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent, correctly tested (200 tests, 100% line coverage, 99% branch coverage), and reviewed for correctness. Nine code issues were identified and fixed (including 3 runcycles spec inconsistencies, 2 network error handling gaps, and 1 concurrency safety fix); five were reviewed and accepted as reasonable design choices.
+The plugin is **production-ready and contract-conformant** with OpenClaw plugin requirements. All 62 config properties, 5 hook registrations, 4 Cycles API operations, and 18 feature gap implementations are internally consistent and reviewed for correctness. The current suite passes 380 tests with 98.23% statement, 95.64% branch, 99.35% function, and 98.83% line coverage. Ten code issues were identified and fixed, including runcycles spec inconsistencies, network error handling gaps, and concurrent-session/runtime state isolation; four were reviewed and accepted as reasonable design choices.
 
 ---
 

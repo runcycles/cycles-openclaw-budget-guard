@@ -7,14 +7,7 @@
  */
 
 import { resolveConfig } from "./config.js";
-import {
-  initHooks,
-  beforeModelResolve,
-  beforePromptBuild,
-  beforeToolCall,
-  afterToolCall,
-  agentEnd,
-} from "./hooks.js";
+import { createHooks } from "./hooks.js";
 import { createOtlpEmitter } from "./metrics-otlp.js";
 import { wrapLogger } from "./logger.js";
 import { PLUGIN_VERSION } from "./version.js";
@@ -252,29 +245,29 @@ export default function (api: OpenClawPluginApi): void {
     );
   }
 
-  initHooks(config, wrapLogger(api.logger, config.logLevel));
+  const hooks = createHooks(config, wrapLogger(api.logger, config.logLevel));
 
-  api.on("before_model_resolve", beforeModelResolve, {
+  api.on("before_model_resolve", hooks.beforeModelResolve, {
     name: "openclaw-budget-guard:before_model_resolve",
     priority: 10,
   });
 
-  api.on("before_prompt_build", beforePromptBuild, {
+  api.on("before_prompt_build", hooks.beforePromptBuild, {
     name: "openclaw-budget-guard:before_prompt_build",
     priority: 10,
   });
 
-  api.on("before_tool_call", beforeToolCall, {
+  api.on("before_tool_call", hooks.beforeToolCall, {
     name: "openclaw-budget-guard:before_tool_call",
     priority: 10,
   });
 
-  api.on("after_tool_call", afterToolCall, {
+  api.on("after_tool_call", hooks.afterToolCall, {
     name: "openclaw-budget-guard:after_tool_call",
     priority: 10,
   });
 
-  api.on("agent_end", agentEnd, {
+  api.on("agent_end", hooks.agentEnd, {
     name: "openclaw-budget-guard:agent_end",
     priority: 100,
   });
