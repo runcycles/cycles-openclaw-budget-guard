@@ -2,7 +2,9 @@
  * OpenClaw lifecycle hook implementations.
  *
  * All hooks follow the OpenClaw (event, ctx) => result pattern.
- * Module-level state is initialized once via initHooks().
+ * Mutable lifecycle state is isolated by the session/run identity supplied by
+ * OpenClaw. Module-level values are limited to plugin runtime dependencies and
+ * the map that owns those isolated states.
  */
 
 import { type CyclesClient, isAllowed } from "runcycles";
@@ -45,77 +47,52 @@ import { createLogger } from "./logger.js";
 import { DryRunClient } from "./dry-run.js";
 
 // ---------------------------------------------------------------------------
-// Module-level state
+// Plugin runtime and isolated session state
 // ---------------------------------------------------------------------------
 
 let client: CyclesClient;
 let config: BudgetGuardConfig;
 let logger: OpenClawLogger;
 
-/** In-flight reservations keyed by callId (tools) or model:<uuid> (models). */
-const activeReservations = new Map<string, ActiveReservation>();
+interface SessionState {
+  /** In-flight tool reservations keyed by the host's toolCallId. */
+  activeReservations: Map<string, ActiveReservation>;
+  cachedSnapshot?: BudgetSnapshot;
+  cachedSnapshotAt: number;
+  totalReservationsMade: number;
+  lastKnownLevel?: BudgetLevel;
+  costBreakdown: Map<string, { count: number; totalCost: number }>;
+  totalToolCost: number;
+  totalToolCalls: number;
+  totalModelCost: number;
+  totalModelCalls: number;
+  remainingCallsAllowed: number;
+  toolCallCounts: Map<string, number>;
+  warnedUnconfiguredTools: Set<string>;
+  sessionStartedAt: number;
+  resolvedUserId?: string;
+  resolvedSessionId?: string;
+  /** One pending model hold per isolated session/run. */
+  pendingModelReservation?: ActiveReservation;
+  pendingModelName?: string;
+  turnIndex: number;
+  heartbeatTimers: Map<string, ReturnType<typeof setInterval>>;
+  eventLog: ReservationLogEntry[];
+  windowCostAtStart: number;
+  windowStartedAt: number;
+  lastBurnRate: number;
+  exhaustionWarningFired: boolean;
+  eventLogCapWarned: boolean;
+}
 
-/** Cached budget snapshot with configurable time-based freshness. */
-let cachedSnapshot: BudgetSnapshot | undefined;
-let cachedSnapshotAt = 0;
-
-/** Session-level counters for the final summary. */
-let totalReservationsMade = 0;
-
-/** Gap 5: Last known budget level for transition detection. */
-let lastKnownLevel: BudgetLevel | undefined;
-
-/** Gap 6: Per-component cost breakdown. */
-const costBreakdown = new Map<string, { count: number; totalCost: number }>();
-
-/** Gap 9: Running totals for forecast. */
-let totalToolCost = 0;
-let totalToolCalls = 0;
-let totalModelCost = 0;
-let totalModelCalls = 0;
-
-/** Gap 13: Remaining calls counter for limit_remaining_calls strategy. */
-let remainingCallsAllowed = 0;
-
-/** Per-tool invocation counters for toolCallLimits enforcement. */
-const toolCallCounts = new Map<string, number>();
-
-/** Tools already warned about missing toolBaseCosts entry. */
-const warnedUnconfiguredTools = new Set<string>();
-
-/** Gap 15: Session start time. */
-let sessionStartedAt = 0;
-
-/** Resolved userId/sessionId (from config + ctx overrides). */
-let resolvedUserId: string | undefined;
-let resolvedSessionId: string | undefined;
-
-/** v0.5.0: Pending model reservation for reserve-then-commit pattern. */
-let pendingModelReservation: ActiveReservation | undefined;
-let pendingModelName: string | undefined;
-
-/** v0.5.0: Turn counter for model cost estimator context. */
-let turnIndex = 0;
+/** All mutable hook lifecycle state, keyed by a stable OpenClaw scope. */
+const sessionStates = new Map<string, SessionState>();
 
 /** v0.5.0: Metrics emitter reference (from config or OTLP auto-creation). */
 let metricsEmitter: MetricsEmitter | undefined;
 
 /** v0.5.0: Base tags for all metrics. */
 let baseTags: Record<string, string> = {};
-
-/** v0.6.0: Heartbeat timers for long-running tool reservations. */
-const heartbeatTimers = new Map<string, ReturnType<typeof setInterval>>();
-
-/** v0.6.0: Session event log. */
-const eventLog: ReservationLogEntry[] = [];
-
-/** v0.6.0: Burn rate tracking — cost snapshots per window. */
-let windowCostAtStart = 0;
-let windowStartedAt = 0;
-let lastBurnRate = 0;
-let exhaustionWarningFired = false;
-let eventLogCapWarned = false;
-
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -154,66 +131,133 @@ export function initHooks(
   }
 
   // OpenClaw calls the plugin entrypoint (and thus initHooks) multiple times —
-  // once per channel/worker. Only reset session state on the first init.
-  // Subsequent inits update config/client/logger but preserve accumulated
-  // counters (toolCallCounts, costBreakdown, etc.) so toolCallLimits and
-  // session tracking work correctly across the session.
+  // once per channel/worker. Only reset isolated states on the first init.
+  // Subsequent inits update config/client/logger while preserving each
+  // session's own counters and reservations.
   if (initialized) {
     return;
   }
   initialized = true;
 
-  cachedSnapshot = undefined;
-  cachedSnapshotAt = 0;
-  totalReservationsMade = 0;
-  lastKnownLevel = undefined;
-  activeReservations.clear();
-  costBreakdown.clear();
-  toolCallCounts.clear();
-  warnedUnconfiguredTools.clear();
-  totalToolCost = 0;
-  totalToolCalls = 0;
-  totalModelCost = 0;
-  totalModelCalls = 0;
-  remainingCallsAllowed = config.maxRemainingCallsWhenLow;
-  sessionStartedAt = Date.now();
-  resolvedUserId = config.userId;
-  resolvedSessionId = config.sessionId;
-
-  // v0.5.0: Reset model reservation tracking
-  pendingModelReservation = undefined;
-  pendingModelName = undefined;
-  turnIndex = 0;
-
-  // v0.6.0: Reset new state
-  for (const timer of heartbeatTimers.values()) clearInterval(timer);
-  heartbeatTimers.clear();
-  eventLog.length = 0;
-  windowCostAtStart = 0;
-  windowStartedAt = Date.now();
-  lastBurnRate = 0;
-  exhaustionWarningFired = false;
-  eventLogCapWarned = false;
+  for (const state of sessionStates.values()) stopAllHeartbeats(state);
+  sessionStates.clear();
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
-  const now = Date.now();
-  if (cachedSnapshot && now - cachedSnapshotAt < config.snapshotCacheTtlMs) {
-    return cachedSnapshot;
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resolveScope(
+  event: Record<string, unknown>,
+  ctx: HookContext,
+): { key: string; userId?: string; sessionId?: string } {
+  const metadata = ctx.metadata ?? {};
+  const scopeKey = (kind: string, id: string) => JSON.stringify([config.tenant, kind, id]);
+  const userId = asNonEmptyString(metadata.userId) ?? config.userId;
+  const hostSessionId = asNonEmptyString(ctx.sessionId)
+    ?? asNonEmptyString(metadata.sessionId)
+    ?? asNonEmptyString(event.sessionId);
+  if (hostSessionId) {
+    return { key: scopeKey("session", hostSessionId), userId, sessionId: hostSessionId };
   }
-  const userId = (ctx?.metadata?.userId as string | undefined) ?? resolvedUserId;
-  const sessionId = (ctx?.metadata?.sessionId as string | undefined) ?? resolvedSessionId;
+
+  const sessionKey = asNonEmptyString(ctx.sessionKey)
+    ?? asNonEmptyString(metadata.sessionKey)
+    ?? asNonEmptyString(ctx.conversationId)
+    ?? asNonEmptyString(metadata.conversationId)
+    ?? asNonEmptyString(event.sessionKey)
+    ?? asNonEmptyString(event.conversationId);
+  if (sessionKey) {
+    return { key: scopeKey("session-key", sessionKey), userId, sessionId: config.sessionId };
+  }
+
+  const runId = asNonEmptyString(ctx.runId)
+    ?? asNonEmptyString(metadata.runId)
+    ?? asNonEmptyString(event.runId);
+  if (runId) return { key: scopeKey("run", runId), userId, sessionId: config.sessionId };
+
+  if (config.sessionId) {
+    return {
+      key: scopeKey("configured-session", config.sessionId),
+      userId,
+      sessionId: config.sessionId,
+    };
+  }
+
+  const agentId = asNonEmptyString(ctx.agentId)
+    ?? asNonEmptyString(metadata.agentId)
+    ?? asNonEmptyString(event.agentId);
+  if (agentId) {
+    return { key: scopeKey("agent", agentId), userId, sessionId: config.sessionId };
+  }
+  if (userId) return { key: scopeKey("user", userId), userId, sessionId: config.sessionId };
+
+  return { key: scopeKey("unscoped", "default"), sessionId: config.sessionId };
+}
+
+function createSessionState(identity: { userId?: string; sessionId?: string }): SessionState {
+  const now = Date.now();
+  return {
+    activeReservations: new Map(),
+    cachedSnapshotAt: 0,
+    totalReservationsMade: 0,
+    costBreakdown: new Map(),
+    totalToolCost: 0,
+    totalToolCalls: 0,
+    totalModelCost: 0,
+    totalModelCalls: 0,
+    remainingCallsAllowed: config.maxRemainingCallsWhenLow,
+    toolCallCounts: new Map(),
+    warnedUnconfiguredTools: new Set(),
+    sessionStartedAt: now,
+    resolvedUserId: identity.userId,
+    resolvedSessionId: identity.sessionId,
+    turnIndex: 0,
+    heartbeatTimers: new Map(),
+    eventLog: [],
+    windowCostAtStart: 0,
+    windowStartedAt: now,
+    lastBurnRate: 0,
+    exhaustionWarningFired: false,
+    eventLogCapWarned: false,
+  };
+}
+
+function getSessionState(
+  event: Record<string, unknown>,
+  ctx: HookContext,
+): { key: string; state: SessionState } {
+  const identity = resolveScope(event, ctx);
+  let state = sessionStates.get(identity.key);
+  if (!state) {
+    state = createSessionState(identity);
+    sessionStates.set(identity.key, state);
+  } else {
+    state.resolvedUserId = identity.userId ?? state.resolvedUserId;
+    state.resolvedSessionId = identity.sessionId ?? state.resolvedSessionId;
+  }
+  return { key: identity.key, state };
+}
+
+async function getSnapshot(state: SessionState): Promise<BudgetSnapshot> {
+  const now = Date.now();
+  if (state.cachedSnapshot && now - state.cachedSnapshotAt < config.snapshotCacheTtlMs) {
+    return state.cachedSnapshot;
+  }
 
   // Timeout guard: don't let a hung Cycles server block hook execution
   const SNAPSHOT_TIMEOUT_MS = 10_000;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    cachedSnapshot = await Promise.race([
-      fetchBudgetState(client, config, logger, { userId, sessionId }),
+    state.cachedSnapshot = await Promise.race([
+      fetchBudgetState(client, config, logger, {
+        userId: state.resolvedUserId,
+        sessionId: state.resolvedSessionId,
+      }),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(new Error("fetchBudgetState timed out")), SNAPSHOT_TIMEOUT_MS);
       }),
@@ -221,23 +265,23 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
   } catch (err) {
     if (config.failClosedOnSnapshotError) {
       logger.warn(`Budget snapshot fetch failed (${err}), failing closed (exhausted)`);
-      cachedSnapshot = { remaining: 0, reserved: 0, spent: 0, level: "exhausted" };
+      state.cachedSnapshot = { remaining: 0, reserved: 0, spent: 0, level: "exhausted" };
     } else {
       logger.warn(`Budget snapshot fetch failed (${err}), assuming healthy`);
-      cachedSnapshot = { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
+      state.cachedSnapshot = { remaining: Infinity, reserved: 0, spent: 0, level: "healthy" };
     }
   } finally {
     clearTimeout(timeoutHandle);
   }
-  cachedSnapshotAt = now;
+  state.cachedSnapshotAt = now;
 
   // Gap 5: Detect budget level transitions
-  if (lastKnownLevel !== undefined && cachedSnapshot.level !== lastKnownLevel) {
-    logger.warn(`Budget level changed: ${lastKnownLevel} → ${cachedSnapshot.level} (remaining=${cachedSnapshot.remaining})`);
+  if (state.lastKnownLevel !== undefined && state.cachedSnapshot.level !== state.lastKnownLevel) {
+    logger.warn(`Budget level changed: ${state.lastKnownLevel} → ${state.cachedSnapshot.level} (remaining=${state.cachedSnapshot.remaining})`);
     const event = {
-      previousLevel: lastKnownLevel,
-      currentLevel: cachedSnapshot.level,
-      remaining: cachedSnapshot.remaining,
+      previousLevel: state.lastKnownLevel,
+      currentLevel: state.cachedSnapshot.level,
+      remaining: state.cachedSnapshot.remaining,
       timestamp: now,
     };
     try {
@@ -249,21 +293,21 @@ async function getSnapshot(ctx?: HookContext): Promise<BudgetSnapshot> {
       fireWebhook(config.budgetTransitionWebhookUrl, event);
     }
   }
-  lastKnownLevel = cachedSnapshot.level;
+  state.lastKnownLevel = state.cachedSnapshot.level;
 
   // v0.5.0: Emit budget gauge metrics
-  emitGauge("cycles.budget.remaining", cachedSnapshot.remaining, { currency: config.currency });
-  emitGauge("cycles.budget.reserved", cachedSnapshot.reserved);
-  emitGauge("cycles.budget.spent", cachedSnapshot.spent);
-  const levelValue = cachedSnapshot.level === "healthy" ? 0 : cachedSnapshot.level === "low" ? 1 : 2;
-  emitGauge("cycles.budget.level", levelValue, { level: cachedSnapshot.level });
+  emitGauge("cycles.budget.remaining", state.cachedSnapshot.remaining, { currency: config.currency });
+  emitGauge("cycles.budget.reserved", state.cachedSnapshot.reserved);
+  emitGauge("cycles.budget.spent", state.cachedSnapshot.spent);
+  const levelValue = state.cachedSnapshot.level === "healthy" ? 0 : state.cachedSnapshot.level === "low" ? 1 : 2;
+  emitGauge("cycles.budget.level", levelValue, { level: state.cachedSnapshot.level });
 
-  return cachedSnapshot;
+  return state.cachedSnapshot;
 }
 
-function invalidateSnapshotCache(): void {
-  cachedSnapshot = undefined;
-  cachedSnapshotAt = 0;
+function invalidateSnapshotCache(state: SessionState): void {
+  state.cachedSnapshot = undefined;
+  state.cachedSnapshotAt = 0;
 }
 
 /** Gap 12: Attach budget status to ctx.metadata for end-user visibility. */
@@ -282,23 +326,23 @@ function attachBudgetStatus(ctx: HookContext, snapshot: BudgetSnapshot): void {
 }
 
 /** Gap 6: Update cost breakdown tracking. */
-function trackCost(key: string, cost: number): void {
-  const entry = costBreakdown.get(key);
+function trackCost(state: SessionState, key: string, cost: number): void {
+  const entry = state.costBreakdown.get(key);
   if (entry) {
     entry.count++;
     entry.totalCost += cost;
   } else {
-    costBreakdown.set(key, { count: 1, totalCost: cost });
+    state.costBreakdown.set(key, { count: 1, totalCost: cost });
   }
 }
 
 /** Gap 9: Build forecast data from running totals. */
-function buildForecast(): ForecastData {
+function buildForecast(state: SessionState): ForecastData {
   return {
-    avgToolCost: totalToolCalls > 0 ? totalToolCost / totalToolCalls : 0,
-    avgModelCost: totalModelCalls > 0 ? totalModelCost / totalModelCalls : 0,
-    totalToolCalls,
-    totalModelCalls,
+    avgToolCost: state.totalToolCalls > 0 ? state.totalToolCost / state.totalToolCalls : 0,
+    avgModelCost: state.totalModelCalls > 0 ? state.totalModelCost / state.totalModelCalls : 0,
+    totalToolCalls: state.totalToolCalls,
+    totalModelCalls: state.totalModelCalls,
   };
 }
 
@@ -336,37 +380,37 @@ function emitHistogram(name: string, value: number, tags?: Record<string, string
 const MAX_EVENT_LOG_ENTRIES = 10_000;
 
 /** v0.6.0: Append to event log if enabled. Capped to prevent unbounded growth. */
-function logEvent(entry: ReservationLogEntry): void {
+function logEvent(state: SessionState, entry: ReservationLogEntry): void {
   if (!config.enableEventLog) return;
-  if (eventLog.length >= MAX_EVENT_LOG_ENTRIES) {
-    if (!eventLogCapWarned) {
-      eventLogCapWarned = true;
+  if (state.eventLog.length >= MAX_EVENT_LOG_ENTRIES) {
+    if (!state.eventLogCapWarned) {
+      state.eventLogCapWarned = true;
       logger.warn(`Event log capacity (${MAX_EVENT_LOG_ENTRIES} entries) reached — further events will be dropped`);
     }
     return;
   }
-  eventLog.push(entry);
+  state.eventLog.push(entry);
 }
 
 /** v0.6.0: Get current session cost total. */
-function sessionCostTotal(): number {
+function sessionCostTotal(state: SessionState): number {
   let total = 0;
-  for (const e of costBreakdown.values()) total += e.totalCost;
+  for (const e of state.costBreakdown.values()) total += e.totalCost;
   return total;
 }
 
 /** v0.6.0: Check burn rate and fire anomaly if needed. */
-function checkBurnRate(remaining: number): void {
+function checkBurnRate(state: SessionState, remaining: number): void {
   const now = Date.now();
-  const elapsed = now - windowStartedAt;
+  const elapsed = now - state.windowStartedAt;
   if (elapsed < config.burnRateWindowMs || elapsed <= 0) return;
 
-  const currentTotal = sessionCostTotal();
-  const windowCost = currentTotal - windowCostAtStart;
+  const currentTotal = sessionCostTotal(state);
+  const windowCost = currentTotal - state.windowCostAtStart;
   const currentRate = windowCost / elapsed; // cost per ms
 
-  if (lastBurnRate > 0 && currentRate > 0) {
-    const ratio = currentRate / lastBurnRate;
+  if (state.lastBurnRate > 0 && currentRate > 0) {
+    const ratio = currentRate / state.lastBurnRate;
     if (ratio >= config.burnRateAlertThreshold) {
       logger.warn(
         `Burn rate anomaly: ${ratio.toFixed(1)}x above average (threshold: ${config.burnRateAlertThreshold}x)`,
@@ -374,7 +418,7 @@ function checkBurnRate(remaining: number): void {
       emitCounter("cycles.budget.burn_rate_anomaly", 1, { ratio: ratio.toFixed(1) });
       const event = {
         currentBurnRate: currentRate,
-        averageBurnRate: lastBurnRate,
+        averageBurnRate: state.lastBurnRate,
         ratio,
         threshold: config.burnRateAlertThreshold,
         windowMs: config.burnRateWindowMs,
@@ -385,18 +429,18 @@ function checkBurnRate(remaining: number): void {
     }
   }
 
-  lastBurnRate = currentRate > 0 ? currentRate : lastBurnRate;
-  windowCostAtStart = currentTotal;
-  windowStartedAt = now;
+  state.lastBurnRate = currentRate > 0 ? currentRate : state.lastBurnRate;
+  state.windowCostAtStart = currentTotal;
+  state.windowStartedAt = now;
 }
 
 /** v0.6.0: Check if budget will exhaust soon and warn. */
-function checkExhaustionForecast(remaining: number): void {
-  if (exhaustionWarningFired || remaining === Infinity) return;
-  const elapsed = Date.now() - sessionStartedAt;
+function checkExhaustionForecast(state: SessionState, remaining: number): void {
+  if (state.exhaustionWarningFired || remaining === Infinity) return;
+  const elapsed = Date.now() - state.sessionStartedAt;
   if (elapsed < 1000) return; // need at least 1s of data
 
-  const totalCost = sessionCostTotal();
+  const totalCost = sessionCostTotal(state);
   if (totalCost <= 0) return;
 
   const burnRatePerMs = totalCost / elapsed;
@@ -404,7 +448,7 @@ function checkExhaustionForecast(remaining: number): void {
   const msRemaining = remaining / burnRatePerMs;
 
   if (msRemaining < config.exhaustionWarningThresholdMs) {
-    exhaustionWarningFired = true;
+    state.exhaustionWarningFired = true;
     logger.warn(
       `Budget exhaustion forecast: ~${Math.round(msRemaining / 1000)}s remaining at current burn rate`,
     );
@@ -420,45 +464,53 @@ function checkExhaustionForecast(remaining: number): void {
 }
 
 /** v0.6.0: Start heartbeat timer for a tool reservation. */
-function startHeartbeat(toolCallId: string, reservationId: string): void {
+function startHeartbeat(state: SessionState, toolCallId: string, reservationId: string): void {
   if (config.heartbeatIntervalMs <= 0) return;
+  const heartbeatClient = client;
+  const heartbeatIntervalMs = config.heartbeatIntervalMs;
+  const heartbeatLogger = logger;
   const timer = setInterval(async () => {
     try {
       const body: Record<string, unknown> = {
         idempotency_key: `extend-${reservationId}-${Date.now()}`,
-        extend_by_ms: config.heartbeatIntervalMs,
+        extend_by_ms: heartbeatIntervalMs,
       };
       // Use client.extendReservation if available, otherwise skip
-      if ("extendReservation" in client && typeof (client as unknown as Record<string, unknown>).extendReservation === "function") {
-        await (client as unknown as { extendReservation(id: string, body: Record<string, unknown>): Promise<unknown> })
+      if ("extendReservation" in heartbeatClient && typeof (heartbeatClient as unknown as Record<string, unknown>).extendReservation === "function") {
+        await (heartbeatClient as unknown as { extendReservation(id: string, body: Record<string, unknown>): Promise<unknown> })
           .extendReservation(reservationId, body);
-        logger.debug(`Heartbeat: extended reservation ${reservationId} for tool callId=${toolCallId}`);
+        heartbeatLogger.debug(`Heartbeat: extended reservation ${reservationId} for tool callId=${toolCallId}`);
       }
     } catch {
-      logger.debug(`Heartbeat: failed to extend reservation ${reservationId}`);
+      heartbeatLogger.debug(`Heartbeat: failed to extend reservation ${reservationId}`);
     }
-  }, config.heartbeatIntervalMs);
+  }, heartbeatIntervalMs);
   if (typeof timer === "object" && "unref" in timer) timer.unref();
-  heartbeatTimers.set(toolCallId, timer);
+  state.heartbeatTimers.set(toolCallId, timer);
 }
 
 /** v0.6.0: Stop heartbeat timer for a tool call. */
-function stopHeartbeat(toolCallId: string): void {
-  const timer = heartbeatTimers.get(toolCallId);
+function stopHeartbeat(state: SessionState, toolCallId: string): void {
+  const timer = state.heartbeatTimers.get(toolCallId);
   if (timer) {
     clearInterval(timer);
-    heartbeatTimers.delete(toolCallId);
+    state.heartbeatTimers.delete(toolCallId);
   }
 }
 
-/** v0.5.0: Commit pending model reservation from previous turn. */
-async function commitPendingModelReservation(): Promise<void> {
-  if (!pendingModelReservation) return;
+function stopAllHeartbeats(state: SessionState): void {
+  for (const timer of state.heartbeatTimers.values()) clearInterval(timer);
+  state.heartbeatTimers.clear();
+}
 
-  const reservation = pendingModelReservation;
-  const modelName = pendingModelName ?? "unknown";
-  pendingModelReservation = undefined;
-  pendingModelName = undefined;
+/** v0.5.0: Commit pending model reservation from previous turn. */
+async function commitPendingModelReservation(state: SessionState): Promise<void> {
+  if (!state.pendingModelReservation) return;
+
+  const reservation = state.pendingModelReservation;
+  const modelName = state.pendingModelName ?? "unknown";
+  state.pendingModelReservation = undefined;
+  state.pendingModelName = undefined;
 
   let actual = reservation.estimate;
   if (config.modelCostEstimator) {
@@ -466,7 +518,7 @@ async function commitPendingModelReservation(): Promise<void> {
       const computed = config.modelCostEstimator({
         model: modelName,
         estimatedCost: reservation.estimate,
-        turnIndex: turnIndex - 1,
+        turnIndex: state.turnIndex - 1,
       });
       if (computed != null) actual = computed;
     } catch (err) {
@@ -479,17 +531,17 @@ async function commitPendingModelReservation(): Promise<void> {
   await commitUsage(client, reservation.reservationId, actual, unit, logger, metrics);
   logger.info(`Model committed: ${modelName} (cost=${actual} ${unit})`);
 
-  trackCost(`model:${modelName}`, actual);
-  totalModelCost += actual;
-  totalModelCalls++;
+  trackCost(state, `model:${modelName}`, actual);
+  state.totalModelCost += actual;
+  state.totalModelCalls++;
 
   emitCounter("cycles.reservation.committed", 1, { kind: "model", name: modelName });
   emitHistogram("cycles.reservation.cost", actual, { kind: "model", name: modelName });
-  logEvent({ timestamp: Date.now(), hook: "commit_model", action: "commit", kind: "model", name: modelName, amount: actual, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+  logEvent(state, { timestamp: Date.now(), hook: "commit_model", action: "commit", kind: "model", name: modelName, amount: actual, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
 
-  invalidateSnapshotCache();
+  invalidateSnapshotCache(state);
   if (config.aggressiveCacheInvalidation) {
-    await getSnapshot();
+    await getSnapshot(state);
   }
 }
 
@@ -504,17 +556,15 @@ export async function beforeModelResolve(
   event: ModelResolveEvent,
   ctx: HookContext,
 ): Promise<ModelResolveResult | undefined> {
-  // Gap 3: Resolve user/session from ctx if available
-  if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
-  if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
-
-  const snapshot = await getSnapshot(ctx);
+  const { state } = getSessionState(event, ctx);
+  const snapshot = await getSnapshot(state);
 
   // Resolve model name — check event fields, ctx.metadata, and config fallback.
   // OpenClaw may pass the model in different places depending on version.
   const eventRecord = event as Record<string, unknown>;
   const ctxMeta = (ctx.metadata ?? {}) as Record<string, unknown>;
   const eventModel = event.model
+    ?? ctx.modelId
     ?? eventRecord.modelId as string | undefined
     ?? eventRecord.modelName as string | undefined
     ?? eventRecord.model_id as string | undefined
@@ -564,8 +614,8 @@ export async function beforeModelResolve(
     }
 
     // Gap 13: Apply low-budget strategies
-    if (config.lowBudgetStrategies.includes("limit_remaining_calls") && remainingCallsAllowed <= 0) {
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    if (config.lowBudgetStrategies.includes("limit_remaining_calls") && state.remainingCallsAllowed <= 0) {
+      logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       if (config.failClosed) {
         logger.warn(`Call limit reached for model ${eventModel} — budget is low, blocking model call`);
         return { modelOverride: "__cycles_budget_exhausted__" };
@@ -579,7 +629,7 @@ export async function beforeModelResolve(
       logger.warn(
         `Budget exhausted (${snapshot.remaining} remaining) — blocking model call for ${eventModel}`,
       );
-      logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: eventModel, reason: "budget_exhausted", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       return { modelOverride: "__cycles_budget_exhausted__" };
     }
     logger.warn(
@@ -597,12 +647,14 @@ export async function beforeModelResolve(
     actionName: resolvedModel,
     estimate: modelCost,
     unit: modelCurrency,
+    userId: state.resolvedUserId,
+    sessionId: state.resolvedSessionId,
   });
 
   if (!isAllowed(result.decision)) {
     const reason = result.reasonCode ?? "denied";
     emitCounter("cycles.reservation.denied", 1, { kind: "model", name: resolvedModel, reason });
-    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "deny", kind: "model", name: resolvedModel, decision: result.decision, reason, budgetLevel: snapshot.level, remaining: snapshot.remaining });
 
     if (config.failClosed) {
       logger.warn(`Model reservation denied for ${resolvedModel} (reason: ${reason}, budget: ${snapshot.level}) — blocking model call (failClosed=true)`);
@@ -613,31 +665,31 @@ export async function beforeModelResolve(
     // Track cost locally even though no server-side reservation was created.
     // The model call will proceed, so the session summary and forecasting
     // should reflect the estimated cost.
-    trackCost(`model:${resolvedModel}`, modelCost);
-    totalModelCost += modelCost;
-    totalModelCalls++;
-    turnIndex++;
+    trackCost(state, `model:${resolvedModel}`, modelCost);
+    state.totalModelCost += modelCost;
+    state.totalModelCalls++;
+    state.turnIndex++;
     if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
-      remainingCallsAllowed--;
+      state.remainingCallsAllowed--;
     }
-    invalidateSnapshotCache();
+    invalidateSnapshotCache(state);
 
-    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-    checkBurnRate(snapshot.remaining);
-    checkExhaustionForecast(snapshot.remaining);
+    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, reason: `${reason}:allowed_without_reservation`, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    checkBurnRate(state, snapshot.remaining);
+    checkExhaustionForecast(state, snapshot.remaining);
   } else {
-    totalReservationsMade++;
+    state.totalReservationsMade++;
     emitCounter("cycles.reservation.created", 1, { kind: "model", name: resolvedModel });
     logger.info(`Model reserved: ${resolvedModel} (estimate=${modelCost}, remaining=${snapshot.remaining})`);
 
     // v0.5.0: Commit any pending model reservation from previous turn first
-    await commitPendingModelReservation();
+    await commitPendingModelReservation(state);
 
     if (result.reservationId) {
       // v0.5.0: Reserve-then-commit pattern — hold the reservation open.
       // It will be committed in the next beforePromptBuild or at agentEnd,
       // allowing modelCostEstimator to reconcile the cost.
-      pendingModelReservation = {
+      state.pendingModelReservation = {
         reservationId: result.reservationId,
         estimate: modelCost,
         toolName: resolvedModel,
@@ -645,23 +697,23 @@ export async function beforeModelResolve(
         kind: "model",
         currency: modelCurrency,
       };
-      pendingModelName = resolvedModel;
+      state.pendingModelName = resolvedModel;
     } else {
       // No reservation ID (e.g. dry-run with DENY) — track immediately
-      trackCost(`model:${resolvedModel}`, modelCost);
-      totalModelCost += modelCost;
-      totalModelCalls++;
+      trackCost(state, `model:${resolvedModel}`, modelCost);
+      state.totalModelCost += modelCost;
+      state.totalModelCalls++;
     }
 
-    turnIndex++;
+    state.turnIndex++;
     if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
-      remainingCallsAllowed--;
+      state.remainingCallsAllowed--;
     }
-    invalidateSnapshotCache();
+    invalidateSnapshotCache(state);
 
-    logEvent({ timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-    checkBurnRate(snapshot.remaining);
-    checkExhaustionForecast(snapshot.remaining);
+    logEvent(state, { timestamp: Date.now(), hook: "before_model_resolve", action: "reserve", kind: "model", name: resolvedModel, amount: modelCost, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    checkBurnRate(state, snapshot.remaining);
+    checkExhaustionForecast(state, snapshot.remaining);
   }
 
   if (resolvedModel !== eventModel) {
@@ -681,21 +733,22 @@ export async function beforeModelResolve(
 // ---------------------------------------------------------------------------
 
 export async function beforePromptBuild(
-  _event: PromptBuildEvent,
+  event: PromptBuildEvent,
   ctx: HookContext,
 ): Promise<PromptBuildResult | undefined> {
+  const { state } = getSessionState(event, ctx);
   // v0.5.0: Commit pending model reservation from previous turn
-  await commitPendingModelReservation();
+  await commitPendingModelReservation(state);
 
   if (!config.injectPromptBudgetHint) return undefined;
 
-  const snapshot = await getSnapshot(ctx);
+  const snapshot = await getSnapshot(state);
 
   // Gap 12: Attach status
   attachBudgetStatus(ctx, snapshot);
 
   // Gap 9: Include forecast data in hint
-  const forecast = buildForecast();
+  const forecast = buildForecast(state);
   const hint = formatBudgetHint(snapshot, config, forecast);
   logger.debug(`before_prompt_build: injecting hint (${hint.length} chars)`);
 
@@ -734,16 +787,14 @@ export async function beforeToolCall(
     return { block: true, blockReason: "Missing tool call ID in event" };
   }
 
-  // Resolve user/session from ctx if available (consistent with beforeModelResolve)
-  if (ctx.metadata?.userId) resolvedUserId = ctx.metadata.userId as string;
-  if (ctx.metadata?.sessionId) resolvedSessionId = ctx.metadata.sessionId as string;
+  const { state } = getSessionState(event, ctx);
 
   // Gap 7: Check tool allowlist/blocklist
   const permission = isToolPermitted(toolName, config.toolAllowlist, config.toolBlocklist);
   if (!permission.permitted) {
     logger.warn(`Tool "${toolName}" blocked by access list: ${permission.reason}`);
     emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "access_list" });
-    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: permission.reason, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+    logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: permission.reason, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
     return { block: true, blockReason: permission.reason };
   }
 
@@ -751,11 +802,11 @@ export async function beforeToolCall(
   if (config.toolCallLimits) {
     const limit = config.toolCallLimits[toolName];
     if (limit !== undefined) {
-      const count = toolCallCounts.get(toolName) ?? 0;
+      const count = state.toolCallCounts.get(toolName) ?? 0;
       if (count >= limit) {
         logger.warn(`Tool "${toolName}" blocked: call limit ${limit} reached (${count} calls)`);
         emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "call_limit" });
-        logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: `call_limit:${limit}`, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+        logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: `call_limit:${limit}`, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
         return {
           block: true,
           blockReason: `Tool "${toolName}" exceeded session call limit (${limit})`,
@@ -765,13 +816,13 @@ export async function beforeToolCall(
   }
 
   // Gap 12: Attach budget status
-  const snapshot = await getSnapshot(ctx);
+  const snapshot = await getSnapshot(state);
   attachBudgetStatus(ctx, snapshot);
 
   // Log once per tool when using default cost estimate
   const estimate = config.toolBaseCosts[toolName] ?? DEFAULT_TOOL_COST;
-  if (!(toolName in config.toolBaseCosts) && !warnedUnconfiguredTools.has(toolName)) {
-    warnedUnconfiguredTools.add(toolName);
+  if (!(toolName in config.toolBaseCosts) && !state.warnedUnconfiguredTools.has(toolName)) {
+    state.warnedUnconfiguredTools.add(toolName);
     logger.warn(
       `Tool "${toolName}" has no entry in toolBaseCosts — using default estimate (${DEFAULT_TOOL_COST} ${config.currency}). Add it to toolBaseCosts for accurate budgeting.`,
     );
@@ -788,7 +839,7 @@ export async function beforeToolCall(
         `Tool "${toolName}" blocked: cost ${estimate} exceeds expensive threshold ${threshold}`,
       );
       emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "expensive" });
-      logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "expensive", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+      logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "expensive", budgetLevel: snapshot.level, remaining: snapshot.remaining });
       return {
         block: true,
         blockReason: `Tool "${toolName}" disabled during low budget (cost ${estimate} exceeds threshold ${threshold})`,
@@ -800,11 +851,11 @@ export async function beforeToolCall(
   if (
     snapshot.level === "low" &&
     config.lowBudgetStrategies.includes("limit_remaining_calls") &&
-    remainingCallsAllowed <= 0
+    state.remainingCallsAllowed <= 0
   ) {
     logger.warn(`Tool "${toolName}" blocked: remaining call limit reached`);
     emitCounter("cycles.tool.blocked", 1, { tool: toolName, reason: "remaining_calls" });
-    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "block", kind: "tool", name: toolName, reason: "remaining_calls", budgetLevel: snapshot.level, remaining: snapshot.remaining });
     return {
       block: true,
       blockReason: `Tool call limit reached during low budget (max ${config.maxRemainingCallsWhenLow} calls)`,
@@ -827,6 +878,8 @@ export async function beforeToolCall(
     ttlMs,
     overagePolicy,
     unit,
+    userId: state.resolvedUserId,
+    sessionId: state.resolvedSessionId,
   });
 
   if (!isAllowed(result.decision)) {
@@ -837,7 +890,7 @@ export async function beforeToolCall(
           `Tool "${toolName}" denied, retry ${attempt + 1}/${config.maxRetries} after ${config.retryDelayMs}ms`,
         );
         await sleep(config.retryDelayMs);
-        invalidateSnapshotCache();
+        invalidateSnapshotCache(state);
         const retry = await reserveBudget(client, config, {
           actionKind,
           actionName: toolName,
@@ -845,11 +898,13 @@ export async function beforeToolCall(
           ttlMs,
           overagePolicy,
           unit,
+          userId: state.resolvedUserId,
+          sessionId: state.resolvedSessionId,
         });
         if (isAllowed(retry.decision)) {
-          totalReservationsMade++;
+          state.totalReservationsMade++;
           if (retry.reservationId) {
-            activeReservations.set(event.toolCallId, {
+            state.activeReservations.set(event.toolCallId, {
               reservationId: retry.reservationId,
               estimate,
               toolName,
@@ -857,14 +912,14 @@ export async function beforeToolCall(
               kind: "tool",
               currency: unit,
             });
-            startHeartbeat(event.toolCallId, retry.reservationId);
+            startHeartbeat(state, event.toolCallId, retry.reservationId);
           }
-          toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
+          state.toolCallCounts.set(toolName, (state.toolCallCounts.get(toolName) ?? 0) + 1);
           if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
-            remainingCallsAllowed--;
+            state.remainingCallsAllowed--;
           }
-          invalidateSnapshotCache();
-          logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "reserve", kind: "tool", name: toolName, amount: estimate, decision: retry.decision, reason: "retry_success", budgetLevel: snapshot.level, remaining: snapshot.remaining });
+          invalidateSnapshotCache(state);
+          logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "reserve", kind: "tool", name: toolName, amount: estimate, decision: retry.decision, reason: "retry_success", budgetLevel: snapshot.level, remaining: snapshot.remaining });
           return undefined;
         }
       }
@@ -874,19 +929,19 @@ export async function beforeToolCall(
       `Tool "${toolName}" denied by Cycles (decision=${result.decision}, reason=${result.reasonCode ?? "none"})`,
     );
     emitCounter("cycles.reservation.denied", 1, { kind: "tool", name: toolName, reason: result.reasonCode ?? "denied" });
-    logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "deny", kind: "tool", name: toolName, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+    logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "deny", kind: "tool", name: toolName, decision: result.decision, reason: result.reasonCode, budgetLevel: snapshot.level, remaining: snapshot.remaining });
     return {
       block: true,
       blockReason: `Budget reservation denied for tool "${toolName}": ${result.reasonCode ?? "budget limit reached"}`,
     };
   }
 
-  totalReservationsMade++;
+  state.totalReservationsMade++;
   emitCounter("cycles.reservation.created", 1, { kind: "tool", name: toolName });
   logger.info(`Tool reserved: ${toolName} (estimate=${estimate}, remaining=${snapshot.remaining})`);
 
   if (result.reservationId) {
-    activeReservations.set(event.toolCallId, {
+    state.activeReservations.set(event.toolCallId, {
       reservationId: result.reservationId,
       estimate,
       toolName,
@@ -898,22 +953,22 @@ export async function beforeToolCall(
 
   // v0.6.0: Start heartbeat for long-running tool reservations
   if (result.reservationId) {
-    startHeartbeat(event.toolCallId, result.reservationId);
+    startHeartbeat(state, event.toolCallId, result.reservationId);
   }
 
   // Track per-tool invocation count for toolCallLimits
-  toolCallCounts.set(toolName, (toolCallCounts.get(toolName) ?? 0) + 1);
+  state.toolCallCounts.set(toolName, (state.toolCallCounts.get(toolName) ?? 0) + 1);
 
   // Gap 13: Decrement remaining calls counter
   if (snapshot.level === "low" && config.lowBudgetStrategies.includes("limit_remaining_calls")) {
-    remainingCallsAllowed--;
+    state.remainingCallsAllowed--;
   }
 
-  invalidateSnapshotCache();
+  invalidateSnapshotCache(state);
 
-  logEvent({ timestamp: Date.now(), hook: "before_tool_call", action: "reserve", kind: "tool", name: toolName, amount: estimate, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
-  checkBurnRate(snapshot.remaining);
-  checkExhaustionForecast(snapshot.remaining);
+  logEvent(state, { timestamp: Date.now(), hook: "before_tool_call", action: "reserve", kind: "tool", name: toolName, amount: estimate, decision: result.decision, budgetLevel: snapshot.level, remaining: snapshot.remaining });
+  checkBurnRate(state, snapshot.remaining);
+  checkExhaustionForecast(state, snapshot.remaining);
 
   return undefined;
 }
@@ -924,9 +979,10 @@ export async function beforeToolCall(
 
 export async function afterToolCall(
   event: ToolResultEvent,
-  _ctx: HookContext,
+  ctx: HookContext,
 ): Promise<void> {
-  const reservation = activeReservations.get(event.toolCallId);
+  const { state } = getSessionState(event, ctx);
+  const reservation = state.activeReservations.get(event.toolCallId);
   if (!reservation) {
     logger.debug(
       `after_tool_call: no active reservation for callId=${event.toolCallId}`,
@@ -934,7 +990,7 @@ export async function afterToolCall(
     return;
   }
 
-  stopHeartbeat(event.toolCallId);
+  stopHeartbeat(state, event.toolCallId);
 
   // Gap 2: Use cost estimator if available, otherwise use estimate
   let actual = reservation.estimate;
@@ -956,25 +1012,25 @@ export async function afterToolCall(
   await commitUsage(client, reservation.reservationId, actual, unit, logger);
   // Delete from tracking AFTER commit (not before) so orphaned reservations
   // can be released at agentEnd if commit fails
-  activeReservations.delete(event.toolCallId);
+  state.activeReservations.delete(event.toolCallId);
   logger.info(`Tool committed: ${reservation.toolName} (cost=${actual} ${unit})`);
 
   // Gap 6 & 9: Track tool cost
-  trackCost(`tool:${reservation.toolName}`, actual);
-  totalToolCost += actual;
-  totalToolCalls++;
+  trackCost(state, `tool:${reservation.toolName}`, actual);
+  state.totalToolCost += actual;
+  state.totalToolCalls++;
 
   // v0.5.0: Emit commit metrics
   emitCounter("cycles.reservation.committed", 1, { kind: "tool", name: reservation.toolName });
   emitHistogram("cycles.reservation.cost", actual, { kind: "tool", name: reservation.toolName });
 
-  logEvent({ timestamp: Date.now(), hook: "after_tool_call", action: "commit", kind: "tool", name: reservation.toolName, amount: actual, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+  logEvent(state, { timestamp: Date.now(), hook: "after_tool_call", action: "commit", kind: "tool", name: reservation.toolName, amount: actual, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
 
-  invalidateSnapshotCache();
+  invalidateSnapshotCache(state);
 
   // v0.5.0: Aggressive cache invalidation — proactively refetch after mutation
   if (config.aggressiveCacheInvalidation) {
-    await getSnapshot();
+    await getSnapshot(state);
   }
 }
 
@@ -983,126 +1039,133 @@ export async function afterToolCall(
 // ---------------------------------------------------------------------------
 
 export async function agentEnd(
-  _event: AgentEndEvent,
+  event: AgentEndEvent,
   ctx: HookContext,
 ): Promise<void> {
-  // v0.5.0: Commit any pending model reservation from the last turn.
-  // If commit fails, release the reservation so budget isn't locked until TTL.
-  if (pendingModelReservation) {
-    const resId = pendingModelReservation.reservationId;
-    try {
-      await commitPendingModelReservation();
-    } catch (err) {
-      logger.warn(`Failed to commit pending model reservation ${resId} at agent_end, releasing:`, err);
-      await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+  const { key, state } = getSessionState(event, ctx);
+  try {
+    // v0.5.0: Commit any pending model reservation from the last turn.
+    // If commit fails, release the reservation so budget isn't locked until TTL.
+    if (state.pendingModelReservation) {
+      const resId = state.pendingModelReservation.reservationId;
+      try {
+        await commitPendingModelReservation(state);
+      } catch (err) {
+        logger.warn(`Failed to commit pending model reservation ${resId} at agent_end, releasing:`, err);
+        await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+      }
     }
-  }
 
-  // v0.6.0: Stop all heartbeat timers
-  for (const timer of heartbeatTimers.values()) clearInterval(timer);
-  heartbeatTimers.clear();
+    // v0.6.0: Stop only this session's heartbeat timers before releasing holds.
+    stopAllHeartbeats(state);
 
-  // Release any orphaned reservations
-  if (activeReservations.size > 0) {
-    logger.warn(
-      `agent_end: releasing ${activeReservations.size} orphaned reservation(s)`,
-    );
-    const orphaned = [...activeReservations.values()];
-    for (const r of orphaned) {
-      logEvent({ timestamp: Date.now(), hook: "agent_end", action: "release", kind: r.kind, name: r.toolName, amount: r.estimate, budgetLevel: cachedSnapshot?.level ?? "healthy", remaining: cachedSnapshot?.remaining ?? 0 });
+    // Release any orphaned reservations belonging to this session only.
+    if (state.activeReservations.size > 0) {
+      logger.warn(
+        `agent_end: releasing ${state.activeReservations.size} orphaned reservation(s)`,
+      );
+      const orphaned = [...state.activeReservations.values()];
+      for (const r of orphaned) {
+        logEvent(state, { timestamp: Date.now(), hook: "agent_end", action: "release", kind: r.kind, name: r.toolName, amount: r.estimate, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
+      }
+      const releases = orphaned.map((r) =>
+        releaseReservation(client, r.reservationId, "agent_end_cleanup", logger),
+      );
+      await Promise.allSettled(releases);
+      state.activeReservations.clear();
     }
-    const releases = orphaned.map((r) =>
-      releaseReservation(client, r.reservationId, "agent_end_cleanup", logger),
-    );
-    await Promise.allSettled(releases);
-    activeReservations.clear();
-  }
 
-  // Fetch final budget state for summary
-  invalidateSnapshotCache();
-  const snapshot = await getSnapshot(ctx);
+    // Fetch final budget state for summary
+    invalidateSnapshotCache(state);
+    const snapshot = await getSnapshot(state);
 
-  // Gap 6: Build cost breakdown as plain object
-  const breakdown: Record<string, { count: number; totalCost: number }> = {};
-  for (const [key, value] of costBreakdown) {
-    breakdown[key] = { count: value.count, totalCost: value.totalCost };
-  }
+    // Gap 6: Build cost breakdown as plain object
+    const breakdown: Record<string, { count: number; totalCost: number }> = {};
+    for (const [breakdownKey, value] of state.costBreakdown) {
+      breakdown[breakdownKey] = { count: value.count, totalCost: value.totalCost };
+    }
 
-  // Gap 9: Include forecast data
-  const forecast = buildForecast();
+    // Gap 9: Include forecast data
+    const forecast = buildForecast(state);
 
-  // Build per-tool call counts as plain object
-  const callCounts: Record<string, number> = {};
-  for (const [key, value] of toolCallCounts) {
-    callCounts[key] = value;
-  }
+    // Build per-tool call counts as plain object
+    const callCounts: Record<string, number> = {};
+    for (const [toolName, value] of state.toolCallCounts) {
+      callCounts[toolName] = value;
+    }
 
-  // v0.6.0: Build unconfigured tools report
-  const unconfiguredTools = [...warnedUnconfiguredTools].map((name) => ({
-    name,
-    callCount: callCounts[name] ?? 0,
-    estimatedTotalCost: (callCounts[name] ?? 0) * DEFAULT_TOOL_COST,
-  }));
+    // v0.6.0: Build unconfigured tools report
+    const unconfiguredTools = [...state.warnedUnconfiguredTools].map((name) => ({
+      name,
+      callCount: callCounts[name] ?? 0,
+      estimatedTotalCost: (callCounts[name] ?? 0) * DEFAULT_TOOL_COST,
+    }));
 
-  const summary: SessionSummary = {
-    tenant: config.tenant,
-    budgetId: config.budgetId,
-    budgetScope: config.budgetScope,
-    userId: resolvedUserId,
-    sessionId: resolvedSessionId,
-    remaining: snapshot.remaining,
-    spent: snapshot.spent,
-    reserved: snapshot.reserved,
-    allocated: snapshot.allocated,
-    level: snapshot.level,
-    totalReservationsMade,
-    costBreakdown: breakdown,
-    toolCallCounts: callCounts,
-    startedAt: sessionStartedAt,
-    endedAt: Date.now(),
-    unconfiguredTools: unconfiguredTools.length > 0 ? unconfiguredTools : undefined,
-    eventLog: config.enableEventLog ? [...eventLog] : undefined,
-  };
-
-  logger.info(`Agent session budget summary: remaining=${summary.remaining} spent=${summary.spent} reservations=${summary.totalReservationsMade}`);
-
-  // Attach to context metadata if available
-  if (ctx.metadata) {
-    ctx.metadata["openclaw-budget-guard"] = {
-      ...summary,
-      avgToolCost: forecast.avgToolCost,
-      avgModelCost: forecast.avgModelCost,
-      estimatedRemainingToolCalls:
-        forecast.avgToolCost > 0 ? Math.floor(snapshot.remaining / forecast.avgToolCost) : undefined,
-      estimatedRemainingModelCalls:
-        forecast.avgModelCost > 0 ? Math.floor(snapshot.remaining / forecast.avgModelCost) : undefined,
+    const summary: SessionSummary = {
+      tenant: config.tenant,
+      budgetId: config.budgetId,
+      budgetScope: config.budgetScope,
+      userId: state.resolvedUserId,
+      sessionId: state.resolvedSessionId,
+      remaining: snapshot.remaining,
+      spent: snapshot.spent,
+      reserved: snapshot.reserved,
+      allocated: snapshot.allocated,
+      level: snapshot.level,
+      totalReservationsMade: state.totalReservationsMade,
+      costBreakdown: breakdown,
+      toolCallCounts: callCounts,
+      startedAt: state.sessionStartedAt,
+      endedAt: Date.now(),
+      unconfiguredTools: unconfiguredTools.length > 0 ? unconfiguredTools : undefined,
+      eventLog: config.enableEventLog ? [...state.eventLog] : undefined,
     };
-  }
 
-  // Gap 15: Cross-session analytics
-  if (config.onSessionEnd) {
-    try {
-      await config.onSessionEnd(summary);
-    } catch (err) {
-      logger.warn("onSessionEnd callback error:", err);
+    logger.info(`Agent session budget summary: remaining=${summary.remaining} spent=${summary.spent} reservations=${summary.totalReservationsMade}`);
+
+    // Attach to context metadata if available
+    if (ctx.metadata) {
+      ctx.metadata["openclaw-budget-guard"] = {
+        ...summary,
+        avgToolCost: forecast.avgToolCost,
+        avgModelCost: forecast.avgModelCost,
+        estimatedRemainingToolCalls:
+          forecast.avgToolCost > 0 ? Math.floor(snapshot.remaining / forecast.avgToolCost) : undefined,
+        estimatedRemainingModelCalls:
+          forecast.avgModelCost > 0 ? Math.floor(snapshot.remaining / forecast.avgModelCost) : undefined,
+      };
     }
-  }
-  if (config.analyticsWebhookUrl) {
-    fireWebhook(config.analyticsWebhookUrl, summary);
-  }
 
-  // v0.5.0: Emit session-level metrics
-  const durationMs = summary.endedAt - summary.startedAt;
-  emitHistogram("cycles.session.duration_ms", durationMs);
-  const totalCost = [...costBreakdown.values()].reduce((sum, e) => sum + e.totalCost, 0);
-  emitHistogram("cycles.session.total_cost", totalCost);
-
-  // v0.7.10: Flush metrics emitter to ensure all datapoints are sent
-  if (metricsEmitter?.flush) {
-    try {
-      await metricsEmitter.flush();
-    } catch {
-      // Best-effort — metrics flush failure is non-fatal
+    // Gap 15: Cross-session analytics
+    if (config.onSessionEnd) {
+      try {
+        await config.onSessionEnd(summary);
+      } catch (err) {
+        logger.warn("onSessionEnd callback error:", err);
+      }
     }
+    if (config.analyticsWebhookUrl) {
+      fireWebhook(config.analyticsWebhookUrl, summary);
+    }
+
+    // v0.5.0: Emit session-level metrics
+    const durationMs = summary.endedAt - summary.startedAt;
+    emitHistogram("cycles.session.duration_ms", durationMs);
+    const totalCost = [...state.costBreakdown.values()].reduce((sum, e) => sum + e.totalCost, 0);
+    emitHistogram("cycles.session.total_cost", totalCost);
+
+    // v0.7.10: Flush metrics emitter to ensure all datapoints are sent
+    if (metricsEmitter?.flush) {
+      try {
+        await metricsEmitter.flush();
+      } catch {
+        // Best-effort — metrics flush failure is non-fatal
+      }
+    }
+  } finally {
+    // Never allow a timer or completed session state to survive agent_end,
+    // including callback, metrics, snapshot, commit, or release error paths.
+    stopAllHeartbeats(state);
+    if (sessionStates.get(key) === state) sessionStates.delete(key);
   }
 }

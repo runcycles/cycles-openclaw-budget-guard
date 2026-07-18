@@ -20,6 +20,14 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
+### Fixed
+
+- Isolated all mutable hook lifecycle state by the OpenClaw session/run scope.
+  Concurrent sessions no longer share pending model holds, active tool
+  reservations, cost totals, caches, call limits, event logs, forecasts, or
+  heartbeat timers. Session cleanup now stops and releases only that session's
+  resources, including commit-error paths. No public API migration is required.
+
 ## [0.8.4] — 2026-05-07
 
 npm metadata refresh for category-search discovery. **No code changes** — bundle and runtime behavior are identical to 0.8.3.

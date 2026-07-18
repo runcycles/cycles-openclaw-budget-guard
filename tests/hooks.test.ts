@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { makeConfig, makeLogger, makeSnapshot, makeHookContext } from "./helpers.js";
-import type { BudgetSnapshot } from "../src/types.js";
+import type { BudgetSnapshot, SessionSummary } from "../src/types.js";
 import { BudgetExhaustedError } from "../src/types.js";
 
 // --- Mocks ---
@@ -1206,6 +1206,11 @@ describe("beforeToolCall resolves userId/sessionId from ctx", () => {
     // The snapshot fetch should use the ctx-overridden values
     expect(mockFetchBudgetState).toHaveBeenCalledWith(
       expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ userId: "ctx-user", sessionId: "ctx-session" }),
+    );
+    expect(mockReserveBudget).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ userId: "ctx-user", sessionId: "ctx-session" }),
@@ -2828,6 +2833,162 @@ describe("v0.6.0 — reservation heartbeat", () => {
     mockExtendReservation.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockExtendReservation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent session isolation
+// ---------------------------------------------------------------------------
+
+describe("concurrent session isolation", () => {
+  const mockExtendReservation = vi.fn().mockResolvedValue({});
+  const sessionA = {
+    sessionId: "session-a",
+    sessionKey: "agent:a",
+    runId: "run-a",
+    metadata: {},
+  };
+  const sessionB = {
+    sessionId: "session-b",
+    sessionKey: "agent:b",
+    runId: "run-b",
+    metadata: {},
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockCommitUsage.mockResolvedValue(undefined);
+    mockReleaseReservation.mockResolvedValue(undefined);
+    mockCreateCyclesClient.mockReturnValue({ extendReservation: mockExtendReservation });
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps pending models, tool reservations, costs, and heartbeats isolated", async () => {
+    const summaries: SessionSummary[] = [];
+    setup({
+      heartbeatIntervalMs: 1_000,
+      aggressiveCacheInvalidation: false,
+      injectPromptBudgetHint: false,
+      modelBaseCosts: { "model-a": 1_000, "model-b": 2_000 },
+      toolBaseCosts: { "tool-a": 100, "tool-b": 200 },
+      onSessionEnd: (summary) => {
+        summaries.push(summary);
+      },
+    });
+    mockReserveBudget.mockImplementation(
+      (_client: unknown, _config: unknown, request: { actionName: string }) => Promise.resolve({
+        decision: "ALLOW",
+        reservationId: `reservation-${request.actionName}`,
+        affectedScopes: [],
+      }),
+    );
+
+    // Interleave two complete lifecycles. Reusing the same toolCallId is
+    // intentional: call IDs are only required to be unique within a session.
+    await beforeModelResolve({ model: "model-a" }, sessionA);
+    await beforeModelResolve({ model: "model-b" }, sessionB);
+    await beforeToolCall({ toolName: "tool-a", toolCallId: "shared-call" }, sessionA);
+    await beforeToolCall({ toolName: "tool-b", toolCallId: "shared-call" }, sessionB);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mockExtendReservation.mock.calls.map((call) => call[0]).sort()).toEqual([
+      "reservation-tool-a",
+      "reservation-tool-b",
+    ]);
+
+    await afterToolCall({ toolName: "tool-a", toolCallId: "shared-call" }, sessionA);
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mockExtendReservation).toHaveBeenCalledTimes(1);
+    expect(mockExtendReservation).toHaveBeenCalledWith(
+      "reservation-tool-b",
+      expect.anything(),
+    );
+
+    // Committing B's pending model must never consume A's pending slot.
+    mockCommitUsage.mockClear();
+    await beforePromptBuild({}, sessionB);
+    expect(mockCommitUsage.mock.calls.map((call) => call[1])).toEqual(["reservation-model-b"]);
+
+    // B ends with an orphaned tool. Its cleanup must release only B's hold.
+    await agentEnd({ runId: "run-b" }, sessionB);
+    expect(mockReleaseReservation.mock.calls.map((call) => call[1])).toEqual(["reservation-tool-b"]);
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(mockExtendReservation).not.toHaveBeenCalled();
+
+    // A's model is still pending and remains independently committable.
+    mockCommitUsage.mockClear();
+    await beforePromptBuild({}, sessionA);
+    expect(mockCommitUsage.mock.calls.map((call) => call[1])).toEqual(["reservation-model-a"]);
+    await agentEnd({ runId: "run-a" }, sessionA);
+
+    expect(summaries).toHaveLength(2);
+    const summaryA = summaries.find((summary) => summary.sessionId === "session-a");
+    const summaryB = summaries.find((summary) => summary.sessionId === "session-b");
+    expect(summaryA?.costBreakdown).toEqual({
+      "tool:tool-a": { count: 1, totalCost: 100 },
+      "model:model-a": { count: 1, totalCost: 1_000 },
+    });
+    expect(summaryB?.costBreakdown).toEqual({
+      "model:model-b": { count: 1, totalCost: 2_000 },
+    });
+    expect(summaryA?.toolCallCounts).toEqual({ "tool-a": 1 });
+    expect(summaryB?.toolCallCounts).toEqual({ "tool-b": 1 });
+  });
+
+  it("cleans up only the failing session heartbeat and releases its orphan", async () => {
+    setup({
+      heartbeatIntervalMs: 1_000,
+      aggressiveCacheInvalidation: false,
+      toolBaseCosts: { "tool-a": 100, "tool-b": 200 },
+    });
+    mockReserveBudget.mockImplementation(
+      (_client: unknown, _config: unknown, request: { actionName: string }) => Promise.resolve({
+        decision: "ALLOW",
+        reservationId: `error-${request.actionName}`,
+        affectedScopes: [],
+      }),
+    );
+    mockCommitUsage.mockImplementation(
+      (_client: unknown, reservationId: string) => reservationId === "error-tool-a"
+        ? Promise.reject(new Error("commit failed"))
+        : Promise.resolve(undefined),
+    );
+
+    await beforeToolCall({ toolName: "tool-a", toolCallId: "same-id" }, sessionA);
+    await beforeToolCall({ toolName: "tool-b", toolCallId: "same-id" }, sessionB);
+
+    await expect(
+      afterToolCall({ toolName: "tool-a", toolCallId: "same-id", error: "failed" }, sessionA),
+    ).rejects.toThrow("commit failed");
+
+    // A's timer stopped on the error path; B's timer is still alive.
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mockExtendReservation.mock.calls.map((call) => call[0])).toEqual(["error-tool-b"]);
+
+    await agentEnd({ runId: "run-a", success: false }, sessionA);
+    expect(mockReleaseReservation.mock.calls.map((call) => call[1])).toEqual(["error-tool-a"]);
+
+    // Ending A must not stop or release B's reservation.
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mockExtendReservation.mock.calls.map((call) => call[0])).toEqual(["error-tool-b"]);
+
+    await afterToolCall({ toolName: "tool-b", toolCallId: "same-id" }, sessionB);
+    mockExtendReservation.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(mockExtendReservation).not.toHaveBeenCalled();
+    await agentEnd({ runId: "run-b", success: true }, sessionB);
+    expect(mockReleaseReservation.mock.calls.map((call) => call[1])).toEqual(["error-tool-a"]);
   });
 });
 
