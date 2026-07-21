@@ -851,3 +851,13 @@ The plugin is **production-ready and contract-conformant** with OpenClaw plugin 
 - **Keywords added** (none existed before this release). 23 keywords covering the three pillars (cost / risk / audit), runtime authority, framework targeting (`openclaw`, `mcp`, `claude`, `anthropic`, `openai`), and brand.
 
 Driven by package-portfolio SEO diagnostic: this package shipped with zero npm `keywords`, which materially limited npm-search surfacing despite the highest unique-installer velocity in the org. Companion fixes for other client packages tracked in their respective repos.
+
+---
+
+## Publish Pipeline — npm Trusted Publishing (2026-07-21)
+
+**Files:** `.github/workflows/ci.yml`, `CHANGELOG.md`. **No plugin code changes.**
+
+**Issue:** The publish job authenticated with the long-lived org-level `NPM_TOKEN` secret. The same token expired and broke the `cycles-mcp-server` v0.3.0 release (npm reports an expired token on a scoped package as `E404` on PUT). Any repo publishing with that shared token has the same failure mode.
+
+**Fix:** The publish job now uses npm Trusted Publishing (OIDC): `NODE_AUTH_TOKEN` removed. The job already carried `id-token: write` and `npm install -g npm@latest` (OIDC requires npm >= 11.5.1; Node 20 bundles npm 10), so no other workflow changes were needed. `package.json` metadata was already normalized (`git+` repository URL) — `npm pkg fix` had no semantic changes. The trusted publisher for `@runcycles/openclaw-budget-guard` must be configured on npmjs.com (GitHub Actions: `runcycles/cycles-openclaw-budget-guard`, workflow `ci.yml`, no environment) before the next tagged release.

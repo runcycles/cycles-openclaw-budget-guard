@@ -17,6 +17,12 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 
 ### Changed
 
+- npm publish now uses npm Trusted Publishing (OIDC) instead of the
+  long-lived `NPM_TOKEN` secret. The trusted publisher must be
+  configured for `@runcycles/openclaw-budget-guard` on npmjs.com
+  before the next tagged release. Mirrors the same change in
+  `cycles-mcp-server` (#143 there), whose v0.3.0 release initially
+  failed on an expired token.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
