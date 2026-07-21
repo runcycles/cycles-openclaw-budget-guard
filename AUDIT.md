@@ -861,3 +861,15 @@ Driven by package-portfolio SEO diagnostic: this package shipped with zero npm `
 **Issue:** The publish job authenticated with the long-lived org-level `NPM_TOKEN` secret. The same token expired and broke the `cycles-mcp-server` v0.3.0 release (npm reports an expired token on a scoped package as `E404` on PUT). Any repo publishing with that shared token has the same failure mode.
 
 **Fix:** The publish job now uses npm Trusted Publishing (OIDC): `NODE_AUTH_TOKEN` removed. The job already carried `id-token: write` and `npm install -g npm@latest` (OIDC requires npm >= 11.5.1; Node 20 bundles npm 10), so no other workflow changes were needed. `package.json` metadata was already normalized (`git+` repository URL) — `npm pkg fix` had no semantic changes. The trusted publisher for `@runcycles/openclaw-budget-guard` must be configured on npmjs.com (GitHub Actions: `runcycles/cycles-openclaw-budget-guard`, workflow `ci.yml`, no environment) before the next tagged release.
+
+---
+
+## Dependency Advisory — esbuild < 0.28.1 (2026-07-21)
+
+**Files:** `package.json`, `package-lock.json`. **No plugin code changes** — esbuild is a development-only transitive dependency (via `tsup` and `vitest`/`vite`); nothing ships in `dist/`.
+
+**Issue:** Dependabot alert #4 (low severity): esbuild >= 0.27.3, < 0.28.1 allows arbitrary file read when running the development server on Windows. The lockfile resolved esbuild 0.27.4. No Dependabot PR was possible because `tsup` pins `esbuild ^0.27.0`.
+
+**Fix:** npm `overrides` entry forcing `esbuild ^0.28.1` tree-wide (same fix as `cycles-mcp-server`, 2026-07-21). `npm audit` reports 0 vulnerabilities. Remove the override once `tsup` moves its esbuild range to >= 0.28.
+
+**Verified (2026-07-21):** build (tsup on esbuild 0.28.1), test suite with coverage (98.83% lines / 95.64% branches; 380 passed) all pass.

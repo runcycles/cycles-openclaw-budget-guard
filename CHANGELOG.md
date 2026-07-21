@@ -26,6 +26,14 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 - `dev`: bump `typescript` 6.0.2 → 6.0.3, `vitest` 4.1.2 → 4.1.4,
   `@vitest/coverage-v8` 4.1.2 → 4.1.4, `@types/node` 25.5.0 → 25.6.0.
 
+### Security
+
+- Forced transitive `esbuild` to >= 0.28.1 via npm `overrides`,
+  resolving Dependabot alert #4 (low severity, dev-only: arbitrary
+  file read via the esbuild development server on Windows; `tsup`
+  pins `esbuild ^0.27.0` so no direct range reaches the patched
+  version). Remove the override once `tsup` allows esbuild >= 0.28.
+
 ### Fixed
 
 - Isolated every plugin registration's client, config, logger, metrics, dry-run

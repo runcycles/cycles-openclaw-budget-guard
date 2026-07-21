@@ -66,6 +66,9 @@
   "dependencies": {
     "runcycles": "^0.3.0"
   },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  },
   "devDependencies": {
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.0",
