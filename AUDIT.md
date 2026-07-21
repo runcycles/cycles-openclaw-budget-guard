@@ -873,3 +873,9 @@ Driven by package-portfolio SEO diagnostic: this package shipped with zero npm `
 **Fix:** npm `overrides` entry forcing `esbuild ^0.28.1` tree-wide (same fix as `cycles-mcp-server`, 2026-07-21). `npm audit` reports 0 vulnerabilities. Remove the override once `tsup` moves its esbuild range to >= 0.28.
 
 **Verified (2026-07-21):** build (tsup on esbuild 0.28.1), test suite with coverage (98.83% lines / 95.64% branches; 380 passed) all pass.
+
+---
+
+## Release Pipeline Fix — Pin npm 11 in Publish Job (2026-07-21)
+
+**Files:** `.github/workflows/ci.yml`. **No plugin changes.** `npm install -g npm@latest` in the publish job broke once `latest` became npm 12.0.1, which dropped Node 20 support (`EBADENGINE`) — discovered when it failed the cycles-mcp-server v0.4.0 publish. Pinned to `npm@11` (supports Node 20, satisfies the OIDC minimum of 11.5.1).
