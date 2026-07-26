@@ -7,6 +7,14 @@
 
 ---
 
+## 2026-07-26 — workflow dependency maintenance
+
+Dependabot PRs #141 and #143 update the SHA-pinned checkout action to 7.0.1
+and the CodeQL SARIF uploader to 4.37.3. These are workflow-only patch updates:
+plugin code, configuration, package dependencies, OpenClaw hooks, and Cycles
+wire behavior are unchanged. Build, tests, typecheck, coverage, CodeQL, and
+the remaining repository checks passed on both reviewed heads.
+
 ## Summary
 
 | Category | Pass | Issues |
