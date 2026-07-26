@@ -7,13 +7,18 @@
 
 ---
 
-## 2026-07-26 — workflow dependency maintenance
+## 2026-07-26 — dependency and workflow maintenance
 
-Dependabot PRs #141 and #143 update the SHA-pinned checkout action to 7.0.1
-and the CodeQL SARIF uploader to 4.37.3. These are workflow-only patch updates:
-plugin code, configuration, package dependencies, OpenClaw hooks, and Cycles
-wire behavior are unchanged. Build, tests, typecheck, coverage, CodeQL, and
-the remaining repository checks passed on both reviewed heads.
+Dependabot PRs #140–#144 update OSSF Scorecard to 2.4.4, the SHA-pinned
+checkout action to 7.0.1, the resolved `runcycles` client from 0.3.1 to 0.3.4,
+the CodeQL SARIF uploader to 4.37.3, and development-only PostCSS from 8.5.17
+to 8.5.23. The client stays inside the existing `^0.3.0` manifest range; its
+additive error mapping and retry fixes require no plugin changes. The PostCSS
+patch includes source-map loading hardening and does not ship in `dist/`.
+Plugin code, configuration, OpenClaw hooks, and Cycles wire behavior are
+unchanged. Node 20/22 tests, distribution/plugin verification, typecheck,
+coverage, CodeQL, and the remaining repository checks passed on all five
+heads.
 
 ## Summary
 
