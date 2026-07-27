@@ -909,6 +909,70 @@ describe("commitUsage", () => {
     const callBody = mockCommitReservation.mock.calls[0][1] as Record<string, unknown>;
     expect(callBody).not.toHaveProperty("metrics");
   });
+
+  describe("failure classification (mirrors runcycles 0.4.0 _handleCommit)", () => {
+    const classify = async (response: Record<string, unknown>) => {
+      mockCommitReservation.mockResolvedValue({ isSuccess: false, ...response });
+      const failure: { kind?: string } = {};
+      const client = createCyclesClient(makeConfig());
+      const committed = await commitUsage(
+        client, "res-c", 500_000, "USD_MICROCENTS", logger, undefined, failure,
+      );
+      expect(committed).toBe(false);
+      return failure.kind;
+    };
+
+    it("classifies 5xx as transient", async () => {
+      expect(await classify({ status: 503 })).toBe("transient");
+    });
+
+    it("classifies 429 as transient", async () => {
+      expect(await classify({ status: 429 })).toBe("transient");
+    });
+
+    it("classifies LIMIT_EXCEEDED as transient", async () => {
+      expect(await classify({ status: 400, body: { error: "LIMIT_EXCEEDED" } })).toBe("transient");
+    });
+
+    it("classifies 401 and 403 as auth", async () => {
+      expect(await classify({ status: 401 })).toBe("auth");
+      expect(await classify({ status: 403 })).toBe("auth");
+    });
+
+    it("classifies 410 / RESERVATION_EXPIRED as expired", async () => {
+      expect(await classify({ status: 410 })).toBe("expired");
+      expect(await classify({ status: 409, body: { error: "RESERVATION_EXPIRED" } })).toBe("expired");
+    });
+
+    it("classifies RESERVATION_FINALIZED / IDEMPOTENCY_MISMATCH as settled", async () => {
+      expect(await classify({ status: 409, body: { error: "RESERVATION_FINALIZED" } })).toBe("settled");
+      expect(await classify({ status: 409, body: { error: "IDEMPOTENCY_MISMATCH" } })).toBe("settled");
+    });
+
+    it("classifies other 4xx as rejected", async () => {
+      expect(await classify({ status: 422, body: { error: "INVALID_AMOUNT" } })).toBe("rejected");
+      expect(await classify({ status: 404 })).toBe("rejected");
+    });
+
+    it("classifies a thrown transport error as transient", async () => {
+      mockCommitReservation.mockRejectedValue(new Error("network fail"));
+      const failure: { kind?: string } = {};
+      const client = createCyclesClient(makeConfig());
+      const committed = await commitUsage(
+        client, "res-c", 500_000, "USD_MICROCENTS", logger, undefined, failure,
+      );
+      expect(committed).toBe(false);
+      expect(failure.kind).toBe("transient");
+    });
+
+    it("does not require a failure sink", async () => {
+      mockCommitReservation.mockResolvedValue({ isSuccess: false, status: 503 });
+      const client = createCyclesClient(makeConfig());
+      await expect(
+        commitUsage(client, "res-c", 500_000, "USD_MICROCENTS", logger),
+      ).resolves.toBe(false);
+    });
+  });
 });
 
 describe("releaseReservation", () => {

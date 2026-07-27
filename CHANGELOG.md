@@ -17,6 +17,15 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 
 ### Changed
 
+- Bumped `runcycles` from ^0.3.0 to ^0.4.0. The plugin uses the raw
+  `CyclesClient` (not the SDK's streaming/lifecycle engine), so the
+  0.4.0 durable-commit journal and streaming contract change do not
+  alter plugin behavior.
+- Commit failures are now classified (transient / auth / expired /
+  settled / rejected), mirroring the runcycles 0.4.0 lifecycle engine.
+  `agent_end` no longer releases a hold whose commit failed for a
+  transient, auth, expired, or settled reason — spent budget is never
+  released; only genuine rejections and never-committed holds are.
 - npm publish now uses npm Trusted Publishing (OIDC) instead of the
   long-lived `NPM_TOKEN` secret. The trusted publisher must be
   configured for `@runcycles/openclaw-budget-guard` on npmjs.com

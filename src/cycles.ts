@@ -14,7 +14,14 @@ import {
   type ReservationCreateResponse,
 } from "runcycles";
 
-import type { BudgetGuardConfig, BudgetSnapshot, OpenClawLogger, StandardMetrics } from "./types.js";
+import type {
+  BudgetGuardConfig,
+  BudgetSnapshot,
+  CommitFailureKind,
+  CommitFailureSink,
+  OpenClawLogger,
+  StandardMetrics,
+} from "./types.js";
 import { classifyBudget } from "./budget.js";
 
 function sleepMs(ms: number): Promise<void> {
@@ -244,6 +251,25 @@ export async function reserveBudget(
 // Commit (best-effort — never throws, but reports the outcome)
 // ---------------------------------------------------------------------------
 
+/**
+ * Classify a failed commit response, mirroring runcycles 0.4.0
+ * `src/lifecycle.ts` `_handleCommit`. Only `"rejected"` (genuine 4xx with a
+ * classifiable error) should ever lead to a release of the hold.
+ */
+function classifyCommitFailure(
+  status: number | undefined,
+  errorCode: string | undefined,
+): CommitFailureKind {
+  if (status === 410 || errorCode === "RESERVATION_EXPIRED") return "expired";
+  if (errorCode === "RESERVATION_FINALIZED" || errorCode === "IDEMPOTENCY_MISMATCH") {
+    return "settled";
+  }
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429 || errorCode === "LIMIT_EXCEEDED") return "transient";
+  if (status !== undefined && status >= 400 && status < 500) return "rejected";
+  return "transient"; // 5xx, transport errors, unclassifiable
+}
+
 export async function commitUsage(
   client: CyclesClient,
   reservationId: string,
@@ -251,6 +277,7 @@ export async function commitUsage(
   unit: string,
   logger: OpenClawLogger,
   metrics?: StandardMetrics,
+  failure?: CommitFailureSink,
 ): Promise<boolean> {
   try {
     const body: Record<string, unknown> = {
@@ -262,13 +289,20 @@ export async function commitUsage(
     }
     const response = await client.commitReservation(reservationId, body);
     if (!response.isSuccess) {
+      const rawError = response.body?.error;
+      const kind = classifyCommitFailure(
+        response.status,
+        typeof rawError === "string" ? rawError : undefined,
+      );
+      if (failure) failure.kind = kind;
       logger.warn(
-        `Commit for reservation ${reservationId} returned status ${response.status}`,
+        `Commit for reservation ${reservationId} returned status ${response.status} (${kind})`,
       );
       return false;
     }
     return true;
   } catch (err) {
+    if (failure) failure.kind = "transient";
     logger.warn(`Commit failed for reservation ${reservationId}:`, err);
     return false;
   }

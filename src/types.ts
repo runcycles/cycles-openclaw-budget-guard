@@ -153,6 +153,26 @@ export interface ActiveReservation {
   createdAt: number;
   kind: "model" | "tool";
   currency?: string;
+  /** Set when a commit attempt failed; drives release-vs-retain at agent_end. */
+  commitFailureKind?: CommitFailureKind;
+}
+
+/**
+ * Classification of a failed commit attempt, mirroring the runcycles 0.4.0
+ * lifecycle engine (`_handleCommit`): only a genuine rejection warrants
+ * releasing the hold — transient/auth/expired/settled failures represent
+ * spent budget and must never be released (fleet rule).
+ */
+export type CommitFailureKind =
+  | "transient" // transport error, 5xx, 429/LIMIT_EXCEEDED, unclassifiable
+  | "auth" // 401/403 — credentials issue, spend still real
+  | "expired" // 410/RESERVATION_EXPIRED — server already returned the hold
+  | "settled" // RESERVATION_FINALIZED/IDEMPOTENCY_MISMATCH — already finalized
+  | "rejected"; // genuine 4xx rejection — releasing the hold is correct
+
+/** Optional out-parameter for {@link commitUsage} failure classification. */
+export interface CommitFailureSink {
+  kind?: CommitFailureKind;
 }
 
 // ---------------------------------------------------------------------------
