@@ -1,6 +1,6 @@
 {
   "name": "@runcycles/openclaw-budget-guard",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "description": "Runtime budget, action, and audit authority for OpenClaw agents — enforce LLM cost limits, tool call caps, and audit trails before execution.",
   "keywords": [
     "ai-agent",
@@ -51,7 +51,9 @@
     "README.md"
   ],
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "engines": {
     "node": ">=20.0.0"

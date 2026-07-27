@@ -10,6 +10,8 @@ are in [`AUDIT.md`](AUDIT.md). This file is the summary index.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-27
+
 ### Added
 
 - Repository `CODEOWNERS` for required-review routing.
