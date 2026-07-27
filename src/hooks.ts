@@ -15,6 +15,7 @@ import type {
   BudgetGuardConfig,
   BudgetLevel,
   BudgetSnapshot,
+  CommitFailureSink,
   HookContext,
   MetricsEmitter,
   ModelResolveEvent,
@@ -608,6 +609,7 @@ function stopAllHeartbeats(state: SessionState): void {
 async function commitPendingModelReservationFor(
   runtime: HookRuntime,
   state: SessionState,
+  failure?: CommitFailureSink,
 ): Promise<PendingModelCommitOutcome> {
   const { client, config, logger } = runtime;
   const emitCounter = (name: string, delta: number, tags?: Record<string, string>) =>
@@ -644,6 +646,7 @@ async function commitPendingModelReservationFor(
     unit,
     logger,
     metrics,
+    failure,
   );
   if (committed === false) {
     logger.warn(
@@ -1196,14 +1199,18 @@ async function afterToolCallFor(
   }
 
   const unit = reservation.currency ?? config.currency;
+  const failure: CommitFailureSink = {};
   const committed = await commitUsage(
     client,
     reservation.reservationId,
     actual,
     unit,
     logger,
+    undefined,
+    failure,
   );
   if (committed === false) {
+    reservation.commitFailureKind = failure.kind;
     logger.warn(
       `Tool commit failed for ${reservation.toolName}; retaining reservation for agent_end cleanup`,
     );
@@ -1255,12 +1262,22 @@ async function agentEndFor(
     if (state.pendingModelReservation) {
       const resId = state.pendingModelReservation.reservationId;
       try {
-        const outcome = await commitPendingModelReservationFor(runtime, state);
+        const failure: CommitFailureSink = {};
+        const outcome = await commitPendingModelReservationFor(runtime, state, failure);
         if (outcome === "deferred") {
-          logger.warn(
-            `Failed to commit pending model reservation ${resId} at agent_end, releasing`,
-          );
-          await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+          // Fleet rule (runcycles 0.4.0 lifecycle): never release spent budget
+          // on transient/auth/expired/settled commit failures — only a genuine
+          // rejection means the hold should be freed.
+          if (failure.kind !== undefined && failure.kind !== "rejected") {
+            logger.warn(
+              `Pending model commit for ${resId} failed as ${failure.kind} at agent_end — retaining hold (spend is real; server TTL governs)`,
+            );
+          } else {
+            logger.warn(
+              `Failed to commit pending model reservation ${resId} at agent_end, releasing`,
+            );
+            await releaseReservation(client, resId, "commit_failed_at_agent_end", logger);
+          }
         }
       } catch (err) {
         logger.warn(`Unexpected error committing pending model reservation ${resId} at agent_end, releasing:`, err);
@@ -1272,18 +1289,33 @@ async function agentEndFor(
     stopAllHeartbeats(state);
 
     // Release any orphaned reservations belonging to this session only.
+    // Fleet rule (runcycles 0.4.0 lifecycle): holds whose commit failed for a
+    // transient/auth/expired/settled reason represent spent budget and are
+    // retained (server TTL governs); only never-committed holds and genuine
+    // commit rejections are released.
     if (state.activeReservations.size > 0) {
-      logger.warn(
-        `agent_end: releasing ${state.activeReservations.size} orphaned reservation(s)`,
+      const all = [...state.activeReservations.values()];
+      const retained = all.filter(
+        (r) => r.commitFailureKind !== undefined && r.commitFailureKind !== "rejected",
       );
-      const orphaned = [...state.activeReservations.values()];
-      for (const r of orphaned) {
-        logEvent(state, { timestamp: Date.now(), hook: "agent_end", action: "release", kind: r.kind, name: r.toolName, amount: r.estimate, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
+      const orphaned = all.filter((r) => !retained.includes(r));
+      for (const r of retained) {
+        logger.warn(
+          `agent_end: retaining reservation ${r.reservationId} (${r.toolName}) — commit failed as ${r.commitFailureKind}; not releasing spent budget`,
+        );
       }
-      const releases = orphaned.map((r) =>
-        releaseReservation(client, r.reservationId, "agent_end_cleanup", logger),
-      );
-      await Promise.allSettled(releases);
+      if (orphaned.length > 0) {
+        logger.warn(
+          `agent_end: releasing ${orphaned.length} orphaned reservation(s)`,
+        );
+        for (const r of orphaned) {
+          logEvent(state, { timestamp: Date.now(), hook: "agent_end", action: "release", kind: r.kind, name: r.toolName, amount: r.estimate, budgetLevel: state.cachedSnapshot?.level ?? "healthy", remaining: state.cachedSnapshot?.remaining ?? 0 });
+        }
+        const releases = orphaned.map((r) =>
+          releaseReservation(client, r.reservationId, "agent_end_cleanup", logger),
+        );
+        await Promise.allSettled(releases);
+      }
       state.activeReservations.clear();
     }
 

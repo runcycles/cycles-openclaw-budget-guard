@@ -3,9 +3,26 @@
 **Date:** 2026-07-18
 **Plugin:** `@runcycles/openclaw-budget-guard` v0.8.4 + unreleased fixes
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
-**Cycles client:** `runcycles` ^0.3.0
+**Cycles client:** `runcycles` ^0.4.0
 
 ---
+
+## 2026-07-27 — runcycles ^0.4.0 and commit-failure classification
+
+Bumps `runcycles` from ^0.3.0 to ^0.4.0 (resolved 0.4.0: durable commit
+journal with replay, `POST /v1/events` fallback for expired commits, public
+`flushPendingCommits()`, and a streaming-commit contract change). The plugin
+calls `CyclesClient.commitReservation` directly and uses neither
+`reserveForStream` nor the lifecycle engine, so the SDK behavior change does
+not affect it and the journal does not engage. In the same change,
+`commitUsage` now classifies commit failures
+(transient/auth/expired/settled/rejected) mirroring the 0.4.0 lifecycle
+engine's `_handleCommit`, and `agent_end` no longer releases holds whose
+commit failed for a transient/auth/expired/settled reason — only genuine
+rejections and never-committed holds are released (fleet rule: never release
+spent budget). `src/cycles.ts:classifyCommitFailure`, `src/hooks.ts:agentEndFor`,
+`afterToolCallFor`, `src/types.ts:CommitFailureKind`. Typecheck and all 397
+tests pass; coverage 98.28% lines.
 
 ## 2026-07-26 — dependency and workflow maintenance
 

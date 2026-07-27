@@ -297,6 +297,7 @@ describe("beforeModelResolve", () => {
       expect.any(String),
       expect.anything(),
       expect.objectContaining({ model_version: "gpt-4o" }),
+      undefined,
     );
   });
 
@@ -1261,6 +1262,8 @@ describe("afterToolCall", () => {
       expect.any(Number),
       "USD_MICROCENTS",
       expect.anything(),
+      undefined,
+      expect.anything(),
     );
   });
 
@@ -1338,6 +1341,8 @@ describe("afterToolCall", () => {
       42_000,
       expect.any(String),
       expect.anything(),
+      undefined,
+      expect.anything(),
     );
   });
 
@@ -1372,6 +1377,8 @@ describe("afterToolCall", () => {
       200_000,
       expect.any(String),
       expect.anything(),
+      undefined,
+      expect.anything(),
     );
   });
 
@@ -1402,6 +1409,8 @@ describe("afterToolCall", () => {
       200_000,
       expect.any(String),
       expect.anything(),
+      undefined,
+      expect.anything(),
     );
   });
 
@@ -1431,6 +1440,8 @@ describe("afterToolCall", () => {
       "res-no-currency",
       expect.any(Number),
       "CREDITS",
+      expect.anything(),
+      undefined,
       expect.anything(),
     );
   });
@@ -2024,6 +2035,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       expect.any(String),
       expect.anything(),
       expect.objectContaining({ model_version: "gpt-4o" }),
+      expect.anything(),
     );
   });
 
@@ -2047,6 +2059,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       expect.any(String),
       expect.anything(),
       expect.objectContaining({ model_version: "gpt-4o" }),
+      undefined,
     );
   });
 
@@ -2067,6 +2080,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       expect.any(String),
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -2091,6 +2105,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       expect.any(String),
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -2114,6 +2129,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       expect.any(String),
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -2134,6 +2150,7 @@ describe("v0.5.0 — model reserve-then-commit", () => {
       "TOKENS",
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -2478,6 +2495,8 @@ describe("v0.5.0 — cost breakdown accumulates for repeated tools", () => {
       "tc",
       200_000,
       "TOKENS",
+      expect.anything(),
+      undefined,
       expect.anything(),
     );
   });
@@ -3376,6 +3395,108 @@ describe("v0.7.10 — model reservation release on commit failure", () => {
   });
 });
 
+describe("commit-failure classification — never release spent budget (runcycles 0.4.0 fleet rule)", () => {
+  const failCommitAs = (kind: string) => {
+    mockCommitUsage.mockImplementation((...args: unknown[]) => {
+      const sink = args[6] as { kind?: string } | undefined;
+      if (sink) sink.kind = kind;
+      return Promise.resolve(false);
+    });
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockReleaseReservation.mockResolvedValue(undefined);
+    mockFetchBudgetState.mockResolvedValue(makeSnapshot({ level: "healthy" }));
+    mockIsAllowed.mockReturnValue(true);
+    mockIsToolPermitted.mockReturnValue({ permitted: true });
+  });
+
+  it.each(["transient", "auth", "expired", "settled"])(
+    "retains the pending model hold at agentEnd when the commit failure is %s",
+    async (kind) => {
+      setup();
+      mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-r1", affectedScopes: [] });
+      failCommitAs(kind);
+
+      await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+      await agentEnd({}, makeHookContext());
+
+      expect(mockReleaseReservation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("releases the pending model hold at agentEnd when the commit is genuinely rejected", async () => {
+    setup();
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "model-r1", affectedScopes: [] });
+    failCommitAs("rejected");
+
+    await beforeModelResolve({ model: "gpt-4o" }, makeHookContext());
+    await agentEnd({}, makeHookContext());
+
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-r1",
+      "commit_failed_at_agent_end",
+      expect.anything(),
+    );
+  });
+
+  it("retains a tool hold at agentEnd when its commit failed transiently", async () => {
+    setup({ heartbeatIntervalMs: 0, toolBaseCosts: { tool: 100 } });
+    const ctx = makeHookContext();
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "tool-r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    failCommitAs("transient");
+    await afterToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    await agentEnd({}, ctx);
+
+    expect(mockReleaseReservation).not.toHaveBeenCalled();
+  });
+
+  it("releases a tool hold at agentEnd when its commit was genuinely rejected", async () => {
+    setup({ heartbeatIntervalMs: 0, toolBaseCosts: { tool: 100 } });
+    const ctx = makeHookContext();
+    mockReserveBudget.mockResolvedValue({ decision: "ALLOW", reservationId: "tool-r1", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    failCommitAs("rejected");
+    await afterToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    await agentEnd({}, ctx);
+
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "tool-r1",
+      "agent_end_cleanup",
+      expect.anything(),
+    );
+  });
+
+  it("still releases never-committed tool holds at agentEnd alongside a retained one", async () => {
+    setup({ heartbeatIntervalMs: 0, toolBaseCosts: { tool: 100 } });
+    const ctx = makeHookContext();
+    mockReserveBudget
+      .mockResolvedValueOnce({ decision: "ALLOW", reservationId: "tool-r1", affectedScopes: [] })
+      .mockResolvedValueOnce({ decision: "ALLOW", reservationId: "tool-r2", affectedScopes: [] });
+
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    await beforeToolCall({ toolName: "tool", toolCallId: "call-2" }, ctx);
+    failCommitAs("transient");
+    // call-1 commit fails transiently → retained; call-2 never commits → orphaned
+    await afterToolCall({ toolName: "tool", toolCallId: "call-1" }, ctx);
+    await agentEnd({}, ctx);
+
+    expect(mockReleaseReservation).toHaveBeenCalledTimes(1);
+    expect(mockReleaseReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      "tool-r2",
+      "agent_end_cleanup",
+      expect.anything(),
+    );
+  });
+});
+
 describe("terminal session state cleanup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -3460,6 +3581,8 @@ describe("v0.7.10 — costEstimator null handling", () => {
       "r1",
       200_000,
       expect.any(String),
+      expect.anything(),
+      undefined,
       expect.anything(),
     );
   });
