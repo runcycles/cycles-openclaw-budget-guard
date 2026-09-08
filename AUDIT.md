@@ -7,6 +7,19 @@
 
 ---
 
+## 2026-09-08 — Node type definitions dependency review
+
+Dependabot PR #160 updates development-only `@types/node` from 26.4.0 to
+26.4.1 in the lockfile. Runtime dependencies, plugin source, configuration,
+and Cycles protocol behavior are unchanged.
+
+On dependency head `e3ddb27`, CI passed on Node 20 and 22, including typecheck,
+build, coverage, and distribution/plugin verification. All 397 tests passed;
+the Node 20 run reported 98.86% line and 95.82% branch coverage. The separate
+auto-merge job failed while trying to enable auto-merge before the PR checks
+had settled; this was not a test or package verification failure.
+Evidence: [CI run 34027264376](https://github.com/runcycles/cycles-openclaw-budget-guard/actions/runs/34027264376).
+
 ## 2026-07-27 — runcycles ^0.4.0 and commit-failure classification
 
 Bumps `runcycles` from ^0.3.0 to ^0.4.0 (resolved 0.4.0: durable commit
