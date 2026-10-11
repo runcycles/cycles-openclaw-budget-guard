@@ -1,5 +1,9 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
+## 2026-10-11 — Dependency maintenance
+
+Consolidates PRs #173 and #176: SHA-pinned setup-node 7.1.0 and CodeQL SARIF uploader 4.38.3. Plugin source, runtime dependencies, and protocol behavior are unchanged. The branch includes current main. Existing Node 20/22 typecheck, build, coverage, and distribution/plugin verification checks remain enabled and must pass before merge.
+
 **Date:** 2026-07-18
 **Plugin:** `@runcycles/openclaw-budget-guard` v0.8.4 + unreleased fixes
 **Runtime:** OpenClaw >= 0.1.0, Node 20+
