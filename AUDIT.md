@@ -1,5 +1,17 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
+## 2026-10-19 — Dependabot dependency review
+
+Consolidates the following reviewed updates on current main:
+
+- PR #178: chore(deps): bump ossf/scorecard-action from 2.4.4 to 2.5.0
+- PR #183: chore(deps): bump github/codeql-action/upload-sarif from 4.38.3 to 4.39.0
+
+Workflow actions remain pinned to verified upstream commit SHAs. Existing supported runtime versions, application code, and YAML protocol contracts are preserved. Existing lint, build, test, coverage, conformance, and applicable security checks must pass on the combined commit before merge; coverage requirements are not lowered.
+
+Declines Vitest 5 / coverage-v8 5 PRs #179 and #180 and tsup 9 PR #181. Vitest 5 requires Node 22.12+ and tsup 9 requires Node 22.18+; this plugin retains Node 20 support. Vitest and its coverage provider remain aligned on version 4.
+
+
 ## 2026-10-11 — Dependency maintenance
 
 Consolidates PRs #173 and #176: SHA-pinned setup-node 7.1.0 and CodeQL SARIF uploader 4.38.3. Plugin source, runtime dependencies, and protocol behavior are unchanged. The branch includes current main. Existing Node 20/22 typecheck, build, coverage, and distribution/plugin verification checks remain enabled and must pass before merge.
