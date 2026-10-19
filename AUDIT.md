@@ -9,6 +9,8 @@ Consolidates the following reviewed updates on current main:
 
 Workflow actions remain pinned to verified upstream commit SHAs. Existing supported runtime versions, application code, and YAML protocol contracts are preserved. Existing lint, build, test, coverage, conformance, and applicable security checks must pass on the combined commit before merge; coverage requirements are not lowered.
 
+Declines Vitest 5 / coverage-v8 5 PRs #179 and #180 and tsup 9 PR #181. Vitest 5 requires Node 22.12+ and tsup 9 requires Node 22.18+; this plugin retains Node 20 support. Vitest and its coverage provider remain aligned on version 4.
+
 
 ## 2026-10-11 — Dependency maintenance
 
