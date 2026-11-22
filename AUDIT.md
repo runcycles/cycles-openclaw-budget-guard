@@ -1,5 +1,9 @@
 # cycles-openclaw-budget-guard — Plugin Audit
 
+## 2026-11-22 — Dependabot dependency review
+
+PR #193 pinned the Scorecard workflow to upstream v2.6.0 (commit `23f22cd`). PRs #194 and #195 were declined. Vitest 5.1.1 and its matching coverage provider require a newer Node version than the plugin’s Node 20 test target.
+
 ## 2026-10-23 — Vite development-toolchain update
 
 Dependabot PR #184 updates transitive Vite 8.2.2 to 8.3.5 and its lockfile
